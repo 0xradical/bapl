@@ -21,7 +21,8 @@ end
 local S = locale.space^0
 local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
-local numeral = ( lpeg.P("-")^-1 * ( hex + decimal ) ) / node * S
+local floating = decimal^0 * "." * decimal^1
+local numeral = ( lpeg.P("-")^-1 * ( floating + hex + decimal ) ) / node * S
 local opAdd = lpeg.C(lpeg.S"+-") * S
 local opMul = lpeg.C(lpeg.S"*/%") * S
 local opExp = lpeg.C("^") * S
@@ -45,7 +46,11 @@ grammar = S * lpeg.P{
 } * -1
 
 local function parse (input)
-  return grammar:match(input)
+  local ast = grammar:match(input)
+  if not ast then
+    error("Input doesn't match grammar")
+  end
+  return ast
 end
 
 local function addCode (state, op)
