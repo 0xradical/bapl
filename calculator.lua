@@ -18,16 +18,25 @@ local function foldBin(list)
   return tree
 end
 
+local function foldUnary(list)
+  if #list > 1 then
+    return { tag = "unop", op = list[1], right = list[2] }
+  else
+    return list[1]
+  end
+end
+
 local S = locale.space^0
 local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
-local numeral = ( lpeg.P("-")^-1 * ( scientific + floating  + hex + decimal ) ) / node * S
+local numeral = ( scientific + floating  + hex + decimal ) / node * S
 local opAdd = lpeg.C(lpeg.S"+-") * S
 local opMul = lpeg.C(lpeg.S"*/%") * S
 local opExp = lpeg.C("^") * S
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * S
+local opUn  = lpeg.C("-") * S
 local OP = "(" * S
 local CP = ")" * S
 
@@ -36,11 +45,13 @@ local term = lpeg.V"term"
 local pow = lpeg.V"pow"
 local exp = lpeg.V"exp"
 local cmp = lpeg.V"cmp"
+local un = lpeg.V"un"
 
 grammar = S * lpeg.P{
   "cmp",
   factor = numeral + OP * cmp * CP,
-  pow = lpeg.Ct( factor * ( opExp * factor )^0 ) / foldBin,
+  un = lpeg.Ct( opUn * un  + factor ) / foldUnary,
+  pow = lpeg.Ct( un * ( opExp * un )^0 ) / foldBin,
   term = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
   exp = lpeg.Ct( term * ( opAdd * term )^0 ) / foldBin,
   cmp = lpeg.Ct ( exp * ( opCmp * exp )^0 ) / foldBin
@@ -74,6 +85,10 @@ local ops = {
   ["!="] = "ne"
 }
 
+local unops = {
+  ["-"] = "minus"
+}
+
 local function codeExp(state, ast)
   if ast.tag == "number" then
     addCode(state, "push")
@@ -82,6 +97,9 @@ local function codeExp(state, ast)
     codeExp(state, ast.left)
     codeExp(state, ast.right)
     addCode(state, ops[ast.op])
+  elseif ast.tag == "unop" then
+    codeExp(state, ast.right)
+    addCode(state, unops[ast.op])
   else
     error("invalid AST")
   end
@@ -151,6 +169,9 @@ local function run (code, stack)
       print(">= "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] >= stack[top] and 1 or 0
       top = top - 1
+    elseif code[pc] == "minus" then
+      print("- "..stack[top])
+      stack[top] = -stack[top]
     else
       error("unknown instruction")
     end
