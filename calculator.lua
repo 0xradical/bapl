@@ -3,10 +3,17 @@ local inspect = require "inspect"
 
 local locale = lpeg.locale()
 
-local function node (num)
+local function nodeNum (num)
   return { tag = "number", val = tonumber(num) }
 end
 
+local function nodeVar (var)
+  return { tag = "variable", var = var}
+end
+
+local function nodeAssgn (id, exp)
+  return { tag = "assignment", id = id, exp = exp}
+end
 
 local function foldBin(list)
   local tree = list[1]
@@ -27,14 +34,24 @@ local function foldUnary(list)
 end
 
 local S = locale.space^0
+local alpha = lpeg.R("AZ", "az")
+local underscore = lpeg.P("_")
+local digit = lpeg.R("09")
+local alphanum = alpha + digit
+
 local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
-local numeral = ( scientific + floating  + hex + decimal ) / node * S
+local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * S
+
+local ID = lpeg.C(underscore^0 * alpha * alphanum^0) * S
+local var = ID / nodeVar
+local Assgn = "=" * S
+
 local opAdd = lpeg.C(lpeg.S"+-") * S
 local opMul = lpeg.C(lpeg.S"*/%") * S
-local opExp = lpeg.C("^") * S
+local opPow = lpeg.C("^") * S
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * S
 local opUn  = lpeg.C("-") * S
 local OP = "(" * S
@@ -43,18 +60,19 @@ local CP = ")" * S
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
 local pow = lpeg.V"pow"
-local exp = lpeg.V"exp"
+local expr = lpeg.V"expr"
 local cmp = lpeg.V"cmp"
 local un = lpeg.V"un"
 
 grammar = S * lpeg.P{
-  "cmp",
-  factor = numeral + OP * cmp * CP,
-  un = lpeg.Ct( opUn * un  + factor ) / foldUnary,
-  pow = lpeg.Ct( un * ( opExp * un )^0 ) / foldBin,
-  term = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
-  exp = lpeg.Ct( term * ( opAdd * term )^0 ) / foldBin,
-  cmp = lpeg.Ct ( exp * ( opCmp * exp )^0 ) / foldBin
+  "stmt",
+  stmt = ID * Assgn * cmp / nodeAssgn,
+  expr = numeral + OP * cmp * CP + var,
+  un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
+  pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
+  factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
+  term = lpeg.Ct( factor * ( opAdd * factor )^0 ) / foldBin,
+  cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin
 } * -1
 
 local function parse (input)
@@ -97,22 +115,36 @@ local function codeExp(state, ast)
     codeExp(state, ast.left)
     codeExp(state, ast.right)
     addCode(state, ops[ast.op])
+  elseif ast.tag == "variable" then
+    addCode(state, "load")
+    addCode(state, ast.var)
   elseif ast.tag == "unop" then
     codeExp(state, ast.right)
     addCode(state, unops[ast.op])
   else
-    error("invalid AST")
+    error("invalid expression")
+  end
+end
+
+local function codeStmt(state, ast)
+  if ast.tag == "assignment" then
+    -- code lives at the top of the stack
+    codeExp(state, ast.exp)
+    addCode(state, "store")
+    addCode(state, ast.id)
+  else
+    error("invalid statement")
   end
 end
 
 local function compile (ast)
   local state = { code = {} }
-  codeExp(state, ast)
+  codeStmt(state, ast)
 
   return state.code
 end
 
-local function run (code, stack)
+local function run (code, mem, stack)
   local pc = 1
   local top = 0
   while pc <= #code do
@@ -172,6 +204,16 @@ local function run (code, stack)
     elseif code[pc] == "minus" then
       print("- "..stack[top])
       stack[top] = -stack[top]
+    elseif code[pc] == "load" then
+      pc = pc + 1
+      local id = code[pc]
+      top = top + 1
+      stack[top] = mem[id]
+    elseif code[pc] == "store" then
+      pc = pc + 1
+      local id = code[pc]
+      mem[id] = stack[top]
+      top = top - 1
     else
       error("unknown instruction")
     end
@@ -183,9 +225,13 @@ end
 local input = io.read("a")
 local ast = parse(input)
 print(inspect(ast))
+-- code is a tree representing the operations
 local code = compile(ast)
 print(inspect(code))
+-- stack is where the values are manipulates
 local stack = {}
-run(code, stack)
+local mem = { x = 2, _y = 3 }
+run(code, mem, stack)
 
-print(stack[1])
+print(mem.result)
+print(inspect(stack))
