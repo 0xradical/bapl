@@ -15,6 +15,19 @@ local function nodeAssgn (id, exp)
   return { tag = "assignment", id = id, exp = exp}
 end
 
+local function nodeEmptyBlock ()
+  return { tag = "emptyBlock" }
+end
+
+-- stmt2 is optional
+local function nodeStmts (stmt1, stmt2)
+  if stmt2 == nil then
+    return stmt1
+  else
+    return { tag = "sequence", stmt1 = stmt1, stmt2 = stmt2 }
+  end
+end
+
 local function foldBin(list)
   local tree = list[1]
 
@@ -46,7 +59,7 @@ local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
 local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * S
 
 local ID = lpeg.C(underscore^0 * alpha * alphanum^0) * S
-local var = ID / nodeVar
+local var = ( ID / nodeVar ) * S
 local Assgn = "=" * S
 
 local opAdd = lpeg.C(lpeg.S"+-") * S
@@ -56,6 +69,9 @@ local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!="
 local opUn  = lpeg.C("-") * S
 local OP = "(" * S
 local CP = ")" * S
+local OB = "{" * S
+local CB = "}" * S
+local SC = ";" * S
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
@@ -64,9 +80,15 @@ local expr = lpeg.V"expr"
 local cmp = lpeg.V"cmp"
 local un = lpeg.V"un"
 
+local stmt = lpeg.V"stmt"
+local stmts = lpeg.V"stmts"
+local block = lpeg.V"block"
+
 grammar = S * lpeg.P{
-  "stmt",
-  stmt = ID * Assgn * cmp / nodeAssgn,
+  "stmts",
+  stmts = stmt * ( SC^1 * stmts )^-1 * SC^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
+  block = OB * stmts * CB + OB * CB / nodeEmptyBlock,
+  stmt = block + ID * Assgn * cmp / nodeAssgn,
   expr = numeral + OP * cmp * CP + var,
   un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
   pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
@@ -132,6 +154,11 @@ local function codeStmt(state, ast)
     codeExp(state, ast.exp)
     addCode(state, "store")
     addCode(state, ast.id)
+  elseif ast.tag == "sequence" then
+    codeStmt(state, ast.stmt1)
+    codeStmt(state, ast.stmt2)
+  elseif ast.tag == "emptyBlock" then
+    -- do nothing
   else
     error("invalid statement")
   end
