@@ -23,6 +23,10 @@ local function nodeRet (expr)
   return { tag = "return", expr = expr }
 end
 
+local function nodePrint (expr)
+  return { tag = "print", expr = expr }
+end
+
 -- stmt2 is optional
 local function nodeStmts (stmt1, stmt2)
   if stmt2 == nil then
@@ -78,6 +82,7 @@ local OB  = "{" * S
 local CB  = "}" * S
 local SC  = ";" * S
 local RET = "return" * S
+local AT = "@" * S
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
@@ -94,7 +99,7 @@ grammar = S * lpeg.P{
   "stmts",
   stmts = stmt * ( SC^1 * stmts )^-1 * SC^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = OB * stmts * CB + OB * CB / nodeEmptyBlock,
-  stmt = block + ID * Assgn * cmp / nodeAssgn + RET * cmp / nodeRet,
+  stmt = AT * cmp / nodePrint + block + ID * Assgn * cmp / nodeAssgn + RET * cmp / nodeRet,
   expr = numeral + OP * cmp * CP + var,
   un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
   pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
@@ -168,6 +173,9 @@ local function codeStmt(state, ast)
   elseif ast.tag == "return" then
     codeExp(state, ast.expr)
     addCode(state, "return")
+  elseif ast.tag == "print" then
+    codeExp(state, ast.expr)
+    addCode(state, "print")
   else
     error("invalid statement")
   end
@@ -188,8 +196,10 @@ end
 local function run (code, mem, stack)
   local pc = 1
   local top = 0
-  while pc <= #code do
-    if code[pc] == "push" then
+  while true do
+    if code[pc] == "return" then
+      return stack[top]
+    elseif code[pc] == "push" then
       pc = pc + 1
       top = top + 1
       stack[top] = code[pc]
@@ -246,19 +256,23 @@ local function run (code, mem, stack)
       print("- "..stack[top])
       stack[top] = -stack[top]
     elseif code[pc] == "load" then
+      print("load "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       top = top + 1
       stack[top] = mem[id]
     elseif code[pc] == "store" then
+      print("store "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       mem[id] = stack[top]
       top = top - 1
-    elseif code[pc] == "return" then
-      return stack[top]
+    elseif code[pc] == "print" then
+      print("print")
+      print(stack[top])
+      top = top - 1
     else
-      error("unknown instruction")
+      error("unknown instruction "..inspect(code[pc]))
     end
 
     pc = pc + 1
@@ -273,7 +287,7 @@ local code = compile(ast)
 print(inspect(code))
 -- stack is where the values are manipulates
 local stack = {}
-local mem = { x = 2, _y = 3 }
+local mem = {}
 ret = run(code, mem, stack)
 
 print("RESULT: "..inspect(mem.result))
