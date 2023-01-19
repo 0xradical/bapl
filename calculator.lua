@@ -3,6 +3,11 @@ local inspect = require "inspect"
 
 local locale = lpeg.locale()
 
+-- match-time capture based debugger
+local function I (msg)
+  return lpeg.P(function () print(msg); return true end)
+end
+
 local function nodeNum (num)
   return { tag = "number", val = tonumber(num) }
 end
@@ -54,7 +59,14 @@ local function foldUnary(list)
   end
 end
 
-local S = locale.space^0
+local maxmatch = 0
+local S = locale.space^0 * lpeg.P(
+  function (_, p)
+    maxmatch = math.max(p, maxmatch)
+
+    return true
+  end
+)
 local alpha = lpeg.R("AZ", "az")
 local underscore = lpeg.P("_")
 local digit = lpeg.R("09")
@@ -111,7 +123,7 @@ grammar = S * lpeg.P{
 local function parse (input)
   local ast = grammar:match(input)
   if not ast then
-    error("Input doesn't match grammar")
+    error("Input doesn't match grammar, maxmatch: "..maxmatch)
   end
   return ast
 end
