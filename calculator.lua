@@ -11,12 +11,16 @@ local function nodeVar (var)
   return { tag = "variable", var = var}
 end
 
-local function nodeAssgn (id, exp)
-  return { tag = "assignment", id = id, exp = exp}
+local function nodeAssgn (id, expr)
+  return { tag = "assignment", id = id, expr = expr}
 end
 
 local function nodeEmptyBlock ()
   return { tag = "emptyBlock" }
+end
+
+local function nodeRet (expr)
+  return { tag = "return", expr = expr }
 end
 
 -- stmt2 is optional
@@ -67,11 +71,13 @@ local opMul = lpeg.C(lpeg.S"*/%") * S
 local opPow = lpeg.C("^") * S
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * S
 local opUn  = lpeg.C("-") * S
-local OP = "(" * S
-local CP = ")" * S
-local OB = "{" * S
-local CB = "}" * S
-local SC = ";" * S
+
+local OP  = "(" * S
+local CP  = ")" * S
+local OB  = "{" * S
+local CB  = "}" * S
+local SC  = ";" * S
+local RET = "return" * S
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
@@ -88,7 +94,7 @@ grammar = S * lpeg.P{
   "stmts",
   stmts = stmt * ( SC^1 * stmts )^-1 * SC^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = OB * stmts * CB + OB * CB / nodeEmptyBlock,
-  stmt = block + ID * Assgn * cmp / nodeAssgn,
+  stmt = block + ID * Assgn * cmp / nodeAssgn + RET * cmp / nodeRet,
   expr = numeral + OP * cmp * CP + var,
   un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
   pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
@@ -151,7 +157,7 @@ end
 local function codeStmt(state, ast)
   if ast.tag == "assignment" then
     -- code lives at the top of the stack
-    codeExp(state, ast.exp)
+    codeExp(state, ast.expr)
     addCode(state, "store")
     addCode(state, ast.id)
   elseif ast.tag == "sequence" then
@@ -159,6 +165,9 @@ local function codeStmt(state, ast)
     codeStmt(state, ast.stmt2)
   elseif ast.tag == "emptyBlock" then
     -- do nothing
+  elseif ast.tag == "return" then
+    codeExp(state, ast.expr)
+    addCode(state, "return")
   else
     error("invalid statement")
   end
@@ -167,6 +176,11 @@ end
 local function compile (ast)
   local state = { code = {} }
   codeStmt(state, ast)
+
+  -- final 'return 0' in case the program has no final return
+  addCode(state, "push")
+  addCode(state, 0)
+  addCode(state, "return")
 
   return state.code
 end
@@ -241,6 +255,8 @@ local function run (code, mem, stack)
       local id = code[pc]
       mem[id] = stack[top]
       top = top - 1
+    elseif code[pc] == "return" then
+      return stack[top]
     else
       error("unknown instruction")
     end
@@ -258,7 +274,7 @@ print(inspect(code))
 -- stack is where the values are manipulates
 local stack = {}
 local mem = { x = 2, _y = 3 }
-run(code, mem, stack)
+ret = run(code, mem, stack)
 
-print(mem.result)
-print(inspect(stack))
+print("RESULT: "..inspect(mem.result))
+print("RETURN: "..inspect(ret))
