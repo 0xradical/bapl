@@ -140,6 +140,18 @@ local unops = {
   ["-"] = "minus"
 }
 
+local function var2num(state, id)
+  local num = state.vars[id]
+
+  if not num then
+    num = state.nvars + 1
+    state.nvars = num
+    state.vars[id] = num
+  end
+
+  return num
+end
+
 local function codeExp(state, ast)
   if ast.tag == "number" then
     addCode(state, "push")
@@ -150,7 +162,11 @@ local function codeExp(state, ast)
     addCode(state, ops[ast.op])
   elseif ast.tag == "variable" then
     addCode(state, "load")
-    addCode(state, ast.var)
+    if state.vars[ast.var] == nil then
+      error("variable "..ast.var.." has not been declared")
+    else
+      addCode(state, var2num(state, ast.var))
+    end
   elseif ast.tag == "unop" then
     codeExp(state, ast.right)
     addCode(state, unops[ast.op])
@@ -164,7 +180,7 @@ local function codeStmt(state, ast)
     -- code lives at the top of the stack
     codeExp(state, ast.expr)
     addCode(state, "store")
-    addCode(state, ast.id)
+    addCode(state, var2num(state, ast.id))
   elseif ast.tag == "sequence" then
     codeStmt(state, ast.stmt1)
     codeStmt(state, ast.stmt2)
@@ -182,7 +198,7 @@ local function codeStmt(state, ast)
 end
 
 local function compile (ast)
-  local state = { code = {} }
+  local state = { code = {}, vars = {}, nvars = 0 }
   codeStmt(state, ast)
 
   -- final 'return 0' in case the program has no final return
