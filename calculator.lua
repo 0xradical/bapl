@@ -120,10 +120,22 @@ grammar = S * lpeg.P{
   cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin
 } * -1
 
+local function syntaxError(input, position)
+  io.stderr:write("Syntax error:\n")
+  io.stderr:write(
+    string.sub(input, position - 5, position)
+    ..
+    "|"
+    ..
+    string.sub(input, position + 1, position + 6)
+  )
+end
+
 local function parse (input)
   local ast = grammar:match(input)
   if not ast then
-    error("Input doesn't match grammar, maxmatch: "..maxmatch)
+    syntaxError(input, maxmatch)
+    os.exit(1)
   end
   return ast
 end
