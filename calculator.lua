@@ -60,6 +60,7 @@ local function foldUnary(list)
 end
 
 local maxmatch = 0
+
 local S = locale.space^0 * lpeg.P(
   function (_, p)
     maxmatch = math.max(p, maxmatch)
@@ -121,7 +122,8 @@ grammar = S * lpeg.P{
 } * -1
 
 local function syntaxError(input, position)
-  io.stderr:write("Syntax error:\n")
+  local lineError = select(2, string.sub(input, 1, position):gsub('\n', '\n'))
+  io.stderr:write("Syntax error on line "..(lineError)..": \n")
   io.stderr:write(
     string.sub(input, position - 5, position)
     ..
