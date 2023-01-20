@@ -76,7 +76,21 @@ local function T (t)
 end
 
 -- reserved words like return , if , else, etc
+local reservedWords = {
+  "return", "if"
+}
+
+local excluded = lpeg.P(false)
+for i = 1, #reservedWords do
+  excluded = excluded + reservedWords[i]
+end
+excluded = excluded * -alphanum
+
 local function RW (t)
+  if not excluded:match(t) then
+    error("'"..t.."' is not a reserved word")
+    os.exit(1)
+  end
   -- the -alphanum is here to avoid something like return1 to be valid
   return t * -alphanum * space
 end
@@ -87,7 +101,7 @@ local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
 local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * space
 
-local ID = lpeg.C(underscore^0 * alpha * alphanum^0) * space
+local ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space
 local var = ( ID / nodeVar ) * space
 local Assgn = "=" * space
 
@@ -154,9 +168,15 @@ local function parse (input)
   return ast
 end
 
-local function addCode (state, op)
-  local code = state.code
-  code[#code + 1] = op
+
+local Compiler = {
+  code = {},
+  vars = {},
+  nvars = 0
+}
+
+function Compiler:addCode(op)
+  self.code[#(self.code) + 1] = op
 end
 
 local ops = {
@@ -178,73 +198,72 @@ local unops = {
   ["-"] = "minus"
 }
 
-local function var2num(state, id)
-  local num = state.vars[id]
+function Compiler:var2num(id)
+  local num = self.vars[id]
 
   if not num then
-    num = state.nvars + 1
-    state.nvars = num
-    state.vars[id] = num
+    num = self.nvars + 1
+    self.nvars = num
+    self.vars[id] = num
   end
 
   return num
 end
 
-local function codeExp(state, ast)
+function Compiler:codeExp(ast)
   if ast.tag == "number" then
-    addCode(state, "push")
-    addCode(state, ast.val)
+    self:addCode("push")
+    self:addCode(ast.val)
   elseif ast.tag == "binop" then
-    codeExp(state, ast.left)
-    codeExp(state, ast.right)
-    addCode(state, ops[ast.op])
+    self:codeExp(ast.left)
+    self:codeExp(ast.right)
+    self:addCode(ops[ast.op])
   elseif ast.tag == "variable" then
-    addCode(state, "load")
-    if state.vars[ast.var] == nil then
+    self:addCode("load")
+    if self.vars[ast.var] == nil then
       error("variable "..ast.var.." has not been declared")
     else
-      addCode(state, var2num(state, ast.var))
+      self:addCode(self:var2num(ast.var))
     end
   elseif ast.tag == "unop" then
-    codeExp(state, ast.right)
-    addCode(state, unops[ast.op])
+    self:codeExp(ast.right)
+    self:addCode(unops[ast.op])
   else
     error("invalid expression")
   end
 end
 
-local function codeStmt(state, ast)
+function Compiler:codeStmt(ast)
   if ast.tag == "assignment" then
     -- code lives at the top of the stack
-    codeExp(state, ast.expr)
-    addCode(state, "store")
-    addCode(state, var2num(state, ast.id))
+    self:codeExp(ast.expr)
+    self:addCode("store")
+    self:addCode(self:var2num(ast.id))
   elseif ast.tag == "sequence" then
-    codeStmt(state, ast.stmt1)
-    codeStmt(state, ast.stmt2)
+    self:codeStmt(ast.stmt1)
+    self:codeStmt(ast.stmt2)
   elseif ast.tag == "emptyBlock" then
     -- do nothing
   elseif ast.tag == "return" then
-    codeExp(state, ast.expr)
-    addCode(state, "return")
+    self:codeExp(ast.expr)
+    self:addCode("return")
   elseif ast.tag == "print" then
-    codeExp(state, ast.expr)
-    addCode(state, "print")
+    self:codeExp(ast.expr)
+    self:addCode("print")
   else
     error("invalid statement")
   end
 end
 
-local function compile (ast)
-  local state = { code = {}, vars = {}, nvars = 0 }
-  codeStmt(state, ast)
+function Compiler:compile(ast)
+  self:codeStmt(ast)
 
   -- final 'return 0' in case the program has no final return
-  addCode(state, "push")
-  addCode(state, 0)
-  addCode(state, "return")
+  self:addCode("push")
+  self:addCode(0)
+  self:addCode("return")
 
-  return state.code
+  return self.code
 end
 
 local function run (code, mem, stack)
@@ -337,9 +356,9 @@ local input = io.read("a")
 local ast = parse(input)
 print(inspect(ast))
 -- code is a tree representing the operations
-local code = compile(ast)
+local code = Compiler:compile(ast)
 print(inspect(code))
--- stack is where the values are manipulates
+-- -- stack is where the values are manipulates
 local stack = {}
 local mem = {}
 ret = run(code, mem, stack)
