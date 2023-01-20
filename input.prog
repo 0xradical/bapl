@@ -1,5 +1,9 @@
-x = 10 + 4;
+x = 10 + 4; # comment
 y = 5;
 z = 3;
+#{ this
+is a multiline
+comment
+#}
 
 return x + z / y;

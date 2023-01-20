@@ -59,15 +59,12 @@ local function foldUnary(list)
   end
 end
 
+local singlelineComment = "#" * (lpeg.P(1) - "\n")^0
+local multilineComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"
+local comment = multilineComment + singlelineComment
+
 local maxmatch = 0
-
-local S = locale.space^0 * lpeg.P(
-  function (_, p)
-    maxmatch = math.max(p, maxmatch)
-
-    return true
-  end
-)
+local space = lpeg.V"space"
 local alpha = lpeg.R("AZ", "az")
 local underscore = lpeg.P("_")
 local digit = lpeg.R("09")
@@ -77,25 +74,25 @@ local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
-local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * S
+local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * space
 
-local ID = lpeg.C(underscore^0 * alpha * alphanum^0) * S
-local var = ( ID / nodeVar ) * S
-local Assgn = "=" * S
+local ID = lpeg.C(underscore^0 * alpha * alphanum^0) * space
+local var = ( ID / nodeVar ) * space
+local Assgn = "=" * space
 
-local opAdd = lpeg.C(lpeg.S"+-") * S
-local opMul = lpeg.C(lpeg.S"*/%") * S
-local opPow = lpeg.C("^") * S
-local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * S
-local opUn  = lpeg.C("-") * S
+local opAdd = lpeg.C(lpeg.S"+-") * space
+local opMul = lpeg.C(lpeg.S"*/%") * space
+local opPow = lpeg.C("^") * space
+local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * space
+local opUn  = lpeg.C("-") * space
 
-local OP  = "(" * S
-local CP  = ")" * S
-local OB  = "{" * S
-local CB  = "}" * S
-local SC  = ";" * S
-local RET = "return" * S
-local AT = "@" * S
+local OP  = "(" * space
+local CP  = ")" * space
+local OB  = "{" * space
+local CB  = "}" * space
+local SC  = ";" * space
+local RET = "return" * space
+local AT = "@" * space
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
@@ -108,8 +105,9 @@ local stmt = lpeg.V"stmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 
-grammar = S * lpeg.P{
-  "stmts",
+grammar = lpeg.P{
+  "prog",
+  prog = space * stmts * -1,
   stmts = stmt * ( SC^1 * stmts )^-1 * SC^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = OB * stmts * CB + OB * CB / nodeEmptyBlock,
   stmt = AT * cmp / nodePrint + block + ID * Assgn * cmp / nodeAssgn + RET * cmp / nodeRet,
@@ -118,8 +116,15 @@ grammar = S * lpeg.P{
   pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
   term = lpeg.Ct( factor * ( opAdd * factor )^0 ) / foldBin,
-  cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin
-} * -1
+  cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin,
+  space = ( locale.space + comment )^0 * lpeg.P(
+    function (_, p)
+      maxmatch = math.max(p, maxmatch)
+
+      return true
+    end
+  )
+}
 
 local function syntaxError(input, position)
   local lineError = select(2, string.sub(input, 1, position):gsub('\n', '\n'))
