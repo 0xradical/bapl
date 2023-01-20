@@ -63,12 +63,23 @@ local singlelineComment = "#" * (lpeg.P(1) - "\n")^0
 local multilineComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"
 local comment = multilineComment + singlelineComment
 
-local maxmatch = 0
-local space = lpeg.V"space"
 local alpha = lpeg.R("AZ", "az")
 local underscore = lpeg.P("_")
 local digit = lpeg.R("09")
 local alphanum = alpha + digit
+
+local space = lpeg.V"space"
+
+-- tokens like (, ), {, }, etc
+local function T (t)
+  return t * space
+end
+
+-- reserved words like return , if , else, etc
+local function RW (t)
+  -- the -alphanum is here to avoid something like return1 to be valid
+  return t * -alphanum * space
+end
 
 local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
@@ -86,14 +97,6 @@ local opPow = lpeg.C("^") * space
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * space
 local opUn  = lpeg.C("-") * space
 
-local OP  = "(" * space
-local CP  = ")" * space
-local OB  = "{" * space
-local CB  = "}" * space
-local SC  = ";" * space
-local RET = "return" * space
-local AT = "@" * space
-
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
 local pow = lpeg.V"pow"
@@ -105,13 +108,17 @@ local stmt = lpeg.V"stmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 
+-- used to track max characters matched before
+-- erroring out
+local maxmatch = 0
+
 grammar = lpeg.P{
   "prog",
   prog = space * stmts * -1,
-  stmts = stmt * ( SC^1 * stmts )^-1 * SC^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
-  block = OB * stmts * CB + OB * CB / nodeEmptyBlock,
-  stmt = AT * cmp / nodePrint + block + ID * Assgn * cmp / nodeAssgn + RET * cmp / nodeRet,
-  expr = numeral + OP * cmp * CP + var,
+  stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
+  block = T"{" * stmts * T"}" + T"{" * T"}" / nodeEmptyBlock,
+  stmt = T"@" * cmp / nodePrint + block + ID * Assgn * cmp / nodeAssgn + RW"return" * cmp / nodeRet,
+  expr = numeral + T"(" * cmp * T")" + var,
   un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
   pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,

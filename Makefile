@@ -1,4 +1,4 @@
 .PHONY: run
 
 run:
-	lua -l lpeg calculator.lua < input.prog
+	lua -l lpeg interpreter.lua < input.prog
