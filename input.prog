@@ -7,4 +7,6 @@ is a multiline
 comment
 #}
 
+@ y;
+
 return x + z / y;

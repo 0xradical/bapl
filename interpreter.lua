@@ -8,28 +8,18 @@ local function I (msg)
   return lpeg.P(function () print(msg); return true end)
 end
 
-local function nodeNum (num)
-  return { tag = "number", val = tonumber(num) }
-end
+local function node(tag, ...)
+  local labels = table.pack(...)
+  local params = table.concat(labels, ", ")
+  local fields = string.gsub(params, "(%w+)", "%1 = %1")
 
-local function nodeVar (var)
-  return { tag = "variable", var = var}
-end
+  local code = string.format(
+    "return function (%s) return { tag = \"%s\", %s } end",
+    params, tag, fields
+  )
 
-local function nodeAssgn (id, expr)
-  return { tag = "assignment", id = id, expr = expr}
-end
-
-local function nodeEmptyBlock ()
-  return { tag = "emptyBlock" }
-end
-
-local function nodeRet (expr)
-  return { tag = "return", expr = expr }
-end
-
-local function nodePrint (expr)
-  return { tag = "print", expr = expr }
+  -- print(code)
+  return load(code)()
 end
 
 -- stmt2 is optional
@@ -99,10 +89,10 @@ local hex = "0" * lpeg.S("xX") * ( lpeg.R("09", "af", "AF") )^1
 local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
-local numeral = ( scientific + floating  + hex + decimal ) / nodeNum * space
+local numeral = ( scientific + floating  + hex + decimal ) / tonumber / node("number", "val") * space
 
 local ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space
-local var = ( ID / nodeVar ) * space
+local var = ( ID / node("variable", "var") ) * space
 local Assgn = "=" * space
 
 local opAdd = lpeg.C(lpeg.S"+-") * space
@@ -132,8 +122,8 @@ grammar = lpeg.P{
   "prog",
   prog = space * stmts * -1,
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
-  block = T"{" * stmts * T"}" + T"{" * T"}" / nodeEmptyBlock,
-  stmt = T"@" * neg / nodePrint + block + ID * Assgn * neg / nodeAssgn + RW"return" * neg / nodeRet,
+  block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
+  stmt = T"@" * neg / node("print", "expr") + block + ID * Assgn * neg / node("assignment", "id", "expr") + RW"return" * neg / node("return", "expr"),
   expr = numeral + T"(" * cmp * T")" + var,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
