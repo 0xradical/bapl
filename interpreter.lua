@@ -110,13 +110,15 @@ local opMul = lpeg.C(lpeg.S"*/%") * space
 local opPow = lpeg.C("^") * space
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * space
 local opUn  = lpeg.C("-") * space
+local opNot = lpeg.C("!") * space
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
 local pow = lpeg.V"pow"
 local expr = lpeg.V"expr"
 local cmp = lpeg.V"cmp"
-local un = lpeg.V"un"
+local minus = lpeg.V"minus"
+local neg = lpeg.V"neg"
 
 local stmt = lpeg.V"stmt"
 local stmts = lpeg.V"stmts"
@@ -131,13 +133,14 @@ grammar = lpeg.P{
   prog = space * stmts * -1,
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / nodeEmptyBlock,
-  stmt = T"@" * cmp / nodePrint + block + ID * Assgn * cmp / nodeAssgn + RW"return" * cmp / nodeRet,
+  stmt = T"@" * neg / nodePrint + block + ID * Assgn * neg / nodeAssgn + RW"return" * neg / nodeRet,
   expr = numeral + T"(" * cmp * T")" + var,
-  un = lpeg.Ct( opUn * un  + expr ) / foldUnary,
-  pow = lpeg.Ct( un * ( opPow * un )^0 ) / foldBin,
+  minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
+  pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
   term = lpeg.Ct( factor * ( opAdd * factor )^0 ) / foldBin,
   cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin,
+  neg =  lpeg.Ct( opNot * neg  + cmp ) / foldUnary,
   space = ( locale.space + comment )^0 * lpeg.P(
     function (_, p)
       maxmatch = math.max(p, maxmatch)
@@ -195,7 +198,8 @@ local ops = {
 }
 
 local unops = {
-  ["-"] = "minus"
+  ["-"] = "minus",
+  ["!"] = "not"
 }
 
 function Compiler:var2num(id)
@@ -267,6 +271,7 @@ function Compiler:compile(ast)
 end
 
 local function run (code, mem, stack)
+  -- program counter
   local pc = 1
   local top = 0
   while true do
@@ -328,6 +333,9 @@ local function run (code, mem, stack)
     elseif code[pc] == "minus" then
       print("- "..stack[top])
       stack[top] = -stack[top]
+    elseif code[pc] == "not" then
+      print("not "..stack[top])
+      stack[top] = stack[top] == 0 and 1 or 0
     elseif code[pc] == "load" then
       print("load "..code[pc+1])
       pc = pc + 1
