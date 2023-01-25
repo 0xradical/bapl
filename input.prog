@@ -1,7 +1,2 @@
-x = 5;
-y = 6;
-
-
-z = x and y;
-
-return z;
+a = new[10];
+a[1] = a[5];

@@ -1,5 +1,6 @@
 local lpeg = require "lpeg"
 local pt = require "pt"
+local inspect = require "inspect"
 
 local locale = lpeg.locale()
 
@@ -67,7 +68,8 @@ end
 
 -- reserved words like return , if , else, etc
 local reservedWords = {
-  "return", "if", "elsif", "else", "while", "and", "or"
+  "return", "if", "elsif", "else",
+  "while", "and", "or", "new"
 }
 
 local excluded = lpeg.P(false)
@@ -93,7 +95,6 @@ local numeral = ( scientific + floating  + hex + decimal ) / tonumber / node("nu
 
 local ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space
 local var = ( ID / node("variable", "var") ) * space
-local Assgn = "=" * space
 
 local opAdd = lpeg.C(lpeg.S"+-") * space
 local opMul = lpeg.C(lpeg.S"*/%") * space
@@ -105,6 +106,7 @@ local opAnd = lpeg.C("and") * space
 local opOr = lpeg.C("or") * space
 local opLog = opAnd + opOr
 
+local lhs = lpeg.V"lhs" -- left-hand side
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
 local pow = lpeg.V"pow"
@@ -135,9 +137,13 @@ grammar = lpeg.P{
          block +
          RW"if" * ifStmt +
          whileStmt +
-         ID * Assgn * log / node("assignment", "id", "expr") +
+         lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
-  expr = numeral + T"(" * log * T")" + var,
+  lhs = var * T"[" * log * T"]" / node("indexed", "array", "index") + var,
+  expr = RW"new" * T"[" * log * T"]" / node("new", "size") +
+         numeral +
+         T"(" * log * T")" +
+         lhs,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
@@ -241,6 +247,23 @@ function Compiler:updateJmp(jmp)
   self.code[jmp] = self:currentPosition() - jmp
 end
 
+function Compiler:codeAssgn(ast)
+  local lhs = ast.lhs
+
+  if lhs.tag == "variable" then
+    self:codeExp(ast.expr)
+    self:addCode("store")
+    self:addCode(self:var2num(lhs.var))
+  elseif lhs.tag == "indexed" then
+    self:codeExp(lhs.array)
+    self:codeExp(lhs.index)
+    self:codeExp(ast.expr)
+    self:addCode("setArray")
+  else
+    error("Unknown assigment tag '".."'")
+  end
+end
+
 function Compiler:codeExp(ast)
   if ast.tag == "number" then
     self:addCode("push")
@@ -275,6 +298,13 @@ function Compiler:codeExp(ast)
     else
       self:addCode(self:var2num(ast.var))
     end
+  elseif ast.tag == "indexed" then
+    self:codeExp(ast.array)
+    self:codeExp(ast.index)
+    self:addCode("getArray")
+  elseif ast.tag == "new" then
+    self:codeExp(ast.size)
+    self:addCode("newarray")
   elseif ast.tag == "unop" then
     self:codeExp(ast.right)
     if unops[ast.op] == nil then
@@ -283,16 +313,13 @@ function Compiler:codeExp(ast)
     end
     self:addCode(unops[ast.op])
   else
-    error("invalid expression")
+    error("Invalid expression: unknown tag '"..ast.tag.."'")
   end
 end
 
 function Compiler:codeStmt(ast)
   if ast.tag == "assignment" then
-    -- code lives at the top of the stack
-    self:codeExp(ast.expr)
-    self:addCode("store")
-    self:addCode(self:var2num(ast.id))
+    self:codeAssgn(ast)
   elseif ast.tag == "sequence" then
     self:codeStmt(ast.stmt1)
     self:codeStmt(ast.stmt2)
