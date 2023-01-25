@@ -17,4 +17,14 @@ if 4 > 3 {
   @ z
 };
 
+n = 6;
+r = 1;
+
+while n >= 1 {
+  r = r * n;
+  n = n - 1;
+};
+
+@ r;
+
 return x + z / y;

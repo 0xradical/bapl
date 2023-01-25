@@ -1,5 +1,5 @@
 local lpeg = require "lpeg"
-local inspect = require "inspect"
+local pt = require "pt"
 
 local locale = lpeg.locale()
 
@@ -67,7 +67,7 @@ end
 
 -- reserved words like return , if , else, etc
 local reservedWords = {
-  "return", "if", "elsif", "else"
+  "return", "if", "elsif", "else", "while"
 }
 
 local excluded = lpeg.P(false)
@@ -112,6 +112,7 @@ local neg = lpeg.V"neg"
 
 local stmt = lpeg.V"stmt"
 local ifStmt = lpeg.V"ifStmt"
+local whileStmt = lpeg.V"whileStmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 
@@ -125,12 +126,14 @@ grammar = lpeg.P{
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
   ifStmt = neg * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
+  whileStmt = RW"while" * neg * block / node("while-loop", "cond", "body"),
   stmt = T"@" * neg / node("print", "expr") +
          block +
          RW"if" * ifStmt +
+         whileStmt +
          ID * Assgn * neg / node("assignment", "id", "expr") +
          RW"return" * neg / node("return", "expr"),
-  expr = numeral + T"(" * cmp * T")" + var,
+  expr = numeral + T"(" * neg * T")" + var,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
@@ -210,10 +213,15 @@ function Compiler:var2num(id)
   return num
 end
 
-function Compiler:codeJmp(op)
+function Compiler:jmpTo(op, label)
   self:addCode(op)
+  self:addCode(label)
+end
+
+function Compiler:codeJmp(op)
   -- we don't know where the jump is jumping to
-  self:addCode(0)
+  -- so we initialize it with a zero
+  self:jmpTo(op, 0)
 
   return self:currentPosition()
 end
@@ -289,6 +297,13 @@ function Compiler:codeStmt(ast)
       self:codeStmt(ast.elsestmt)
       self:updateJmp(jmpElse)
     end
+  elseif ast.tag == "while-loop" then
+    local ilabel = self:currentPosition()
+    self:codeExp(ast.cond)
+    local jmp = self:codeJmp("jmpX")
+    self:codeStmt(ast.body)
+    self:jmpTo("jmp", ilabel - self:currentPosition() - 2) -- back to conditional
+    self:updateJmp(jmp)
   else
     error("invalid statement")
   end
@@ -400,7 +415,7 @@ local function run (code, mem, stack)
       pc = pc + code[pc]
       top = top - 1
     else
-      error("unknown instruction "..inspect(code[pc]))
+      error("unknown instruction at "..pc..": "..pt(code[pc]))
     end
 
     pc = pc + 1
@@ -409,14 +424,14 @@ end
 
 local input = io.read("a")
 local ast = parse(input)
-print(inspect(ast))
+print("AST\n\n"..pt(ast).."\n")
 -- code is a tree representing the operations
 local code = Compiler:compile(ast)
-print(inspect(code))
+print("CODE\n\n"..pt(code).."\n")
 -- -- stack is where the values are manipulates
 local stack = {}
 local mem = {}
 ret = run(code, mem, stack)
 
-print("RESULT: "..inspect(mem.result))
-print("RETURN: "..inspect(ret))
+print("RESULT: "..pt(mem.result))
+print("RETURN: "..pt(ret))
