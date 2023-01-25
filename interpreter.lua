@@ -465,11 +465,17 @@ local function run (code, mem, stack)
     elseif code[pc] == "getarray" then
       local array = stack[top - 1]
       local index = stack[top]
+      if index > array.size then
+        error("index out of range: "..index)
+      end
       stack[top - 1] = array[index]
       top = top - 1
     elseif code[pc] == "setarray" then
       local array  = stack[top - 2]
       local index = stack[top  - 1]
+      if index > array.size then
+        error("index out of range: "..index)
+      end
       local value = stack[top]
       array[index] = value
       top = top - 3
