@@ -1,30 +1,7 @@
-x = 10 + 4; # comment
-y = !!5;
-z = -3;
-return3 = 1;
-#{ this
-is a multiline
-comment
-#}
+x = 5;
+y = 6;
 
-@ y;
 
-if 4 > 3 {
-  @ x
-} elsif 2 > 4 {
-  @ y
-} else {
-  @ z
-};
+z = x and y;
 
-n = 6;
-r = 1;
-
-while n >= 1 {
-  r = r * n;
-  n = n - 1;
-};
-
-@ r;
-
-return x + z / y;
+return z;

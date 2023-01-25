@@ -67,7 +67,7 @@ end
 
 -- reserved words like return , if , else, etc
 local reservedWords = {
-  "return", "if", "elsif", "else", "while"
+  "return", "if", "elsif", "else", "while", "and", "or"
 }
 
 local excluded = lpeg.P(false)
@@ -101,6 +101,9 @@ local opPow = lpeg.C("^") * space
 local opCmp = lpeg.C( lpeg.S("<>") * lpeg.P("=")^-1 + lpeg.P("==") + lpeg.P("!=") ) * space
 local opUn  = lpeg.C("-") * space
 local opNot = lpeg.C("!") * space
+local opAnd = lpeg.C("and") * space
+local opOr = lpeg.C("or") * space
+local opLog = opAnd + opOr
 
 local factor = lpeg.V"factor"
 local term = lpeg.V"term"
@@ -115,6 +118,7 @@ local ifStmt = lpeg.V"ifStmt"
 local whileStmt = lpeg.V"whileStmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
+local log = lpeg.V"log"
 
 -- used to track max characters matched before
 -- erroring out
@@ -125,21 +129,22 @@ grammar = lpeg.P{
   prog = space * stmts * -1,
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
-  ifStmt = neg * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
-  whileStmt = RW"while" * neg * block / node("while-loop", "cond", "body"),
-  stmt = T"@" * neg / node("print", "expr") +
+  ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
+  whileStmt = RW"while" * log * block / node("while-loop", "cond", "body"),
+  stmt = T"@" * log / node("print", "expr") +
          block +
          RW"if" * ifStmt +
          whileStmt +
-         ID * Assgn * neg / node("assignment", "id", "expr") +
-         RW"return" * neg / node("return", "expr"),
-  expr = numeral + T"(" * neg * T")" + var,
+         ID * Assgn * log / node("assignment", "id", "expr") +
+         RW"return" * log / node("return", "expr"),
+  expr = numeral + T"(" * log * T")" + var,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
   factor = lpeg.Ct( pow * ( opMul * pow )^0 ) / foldBin,
   term = lpeg.Ct( factor * ( opAdd * factor )^0 ) / foldBin,
   cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin,
   neg =  lpeg.Ct( opNot * neg  + cmp ) / foldUnary,
+  log = lpeg.Ct ( neg * ( opLog * neg )^0 ) / foldBin,
   space = ( locale.space + comment )^0 * lpeg.P(
     function (_, p)
       maxmatch = math.max(p, maxmatch)
@@ -193,7 +198,9 @@ local ops = {
   [">"] = "gt",
   [">="] = "gte",
   ["=="] = "eq",
-  ["!="] = "ne"
+  ["!="] = "ne",
+  ["and"] = "and",
+  ["or"] = "or"
 }
 
 local unops = {
@@ -239,9 +246,28 @@ function Compiler:codeExp(ast)
     self:addCode("push")
     self:addCode(ast.val)
   elseif ast.tag == "binop" then
-    self:codeExp(ast.left)
-    self:codeExp(ast.right)
-    self:addCode(ops[ast.op])
+    op = ops[ast.op]
+
+    if op == nil then
+      error("Binary operation '"..ast.op.."' is not defined")
+      os.exit(1)
+    end
+
+    if op == "and" then
+      self:codeExp(ast.left)
+      jmpRight = self:codeJmp("jmpZP")
+      self:codeExp(ast.right)
+      self:updateJmp(jmpRight)
+    elseif op == "or" then
+      self:codeExp(ast.left)
+      jmpRight = self:codeJmp("jmpNZP")
+      self:codeExp(ast.right)
+      self:updateJmp(jmpRight)
+    else
+      self:codeExp(ast.left)
+      self:codeExp(ast.right)
+      self:addCode(op)
+    end
   elseif ast.tag == "variable" then
     self:addCode("load")
     if self.vars[ast.var] == nil then
@@ -251,6 +277,10 @@ function Compiler:codeExp(ast)
     end
   elseif ast.tag == "unop" then
     self:codeExp(ast.right)
+    if unops[ast.op] == nil then
+      error("Unary operation '"..ast.op.."' is not defined")
+      os.exit(1)
+    end
     self:addCode(unops[ast.op])
   else
     error("invalid expression")
@@ -414,6 +444,22 @@ local function run (code, mem, stack)
       pc = pc + 1
       pc = pc + code[pc]
       top = top - 1
+    elseif code[pc] == "jmpZP" then -- and
+      print(pc..". jmpZP "..(code[pc+1] - 1))
+      pc = pc + 1
+      if stack[top] == 0 or stack[top] == nil then
+        pc = pc + code[pc] -- skip if 0
+      else
+        top = top - 1 -- evaluate next value on the stack if != 0
+      end
+    elseif code[pc] == "jmpNZP" then -- or
+      print(pc..". jmpNZP "..(code[pc+1] - 1))
+      pc = pc + 1
+      if stack[top] == 0 or stack[top] == nil then
+        top = top - 1 -- evaluate next value on the stack if == 0
+      else
+        pc = pc + code[pc] -- skip if != 0
+      end
     else
       error("unknown instruction at "..pc..": "..pt(code[pc]))
     end
