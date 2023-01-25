@@ -457,7 +457,17 @@ local function run (code, mem, stack)
       top = top - 1
     elseif code[pc] == "print" then
       print(pc..". print")
-      print(stack[top])
+      if stack[top] == nil then
+        print("nil")
+      elseif type(stack[top]) == "table" and stack[top].size then
+        local str = "[ "
+        for i = 1, stack[top].size do
+          str = str..(stack[top][i] or 'nil')..' '
+        end
+        print(str.."]")
+      else
+        print(stack[top])
+      end
       top = top - 1
     elseif code[pc] == "newarray" then
       local size = stack[top]
