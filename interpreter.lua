@@ -258,7 +258,7 @@ function Compiler:codeAssgn(ast)
     self:codeExp(lhs.array)
     self:codeExp(lhs.index)
     self:codeExp(ast.expr)
-    self:addCode("setArray")
+    self:addCode("setarray")
   else
     error("Unknown assigment tag '".."'")
   end
@@ -301,7 +301,7 @@ function Compiler:codeExp(ast)
   elseif ast.tag == "indexed" then
     self:codeExp(ast.array)
     self:codeExp(ast.index)
-    self:addCode("getArray")
+    self:addCode("getarray")
   elseif ast.tag == "new" then
     self:codeExp(ast.size)
     self:addCode("newarray")
@@ -459,6 +459,20 @@ local function run (code, mem, stack)
       print(pc..". print")
       print(stack[top])
       top = top - 1
+    elseif code[pc] == "newarray" then
+      local size = stack[top]
+      stack[top] = { size = size } -- simple substitution
+    elseif code[pc] == "getarray" then
+      local array = stack[top - 1]
+      local index = stack[top]
+      stack[top - 1] = array[index]
+      top = top - 1
+    elseif code[pc] == "setarray" then
+      local array  = stack[top - 2]
+      local index = stack[top  - 1]
+      local value = stack[top]
+      array[index] = value
+      top = top - 3
     elseif code[pc] == "jmpX" then -- conditional jmp
       print(pc..". jmpX "..code[pc+1])
       pc = pc + 1
