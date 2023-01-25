@@ -1,5 +1,5 @@
 x = 10 + 4; # comment
-y = !5;
+y = !!5;
 z = -3;
 return3 = 1;
 #{ this
@@ -8,5 +8,13 @@ comment
 #}
 
 @ y;
+
+if 4 > 3 {
+  @ x
+} elsif 2 > 4 {
+  @ y
+} else {
+  @ z
+};
 
 return x + z / y;

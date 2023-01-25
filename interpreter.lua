@@ -19,7 +19,7 @@ local function node(tag, ...)
   )
 
   -- print(code)
-  return load(code)()
+  return assert(load(code))()
 end
 
 -- stmt2 is optional
@@ -67,7 +67,7 @@ end
 
 -- reserved words like return , if , else, etc
 local reservedWords = {
-  "return", "if"
+  "return", "if", "elsif", "else"
 }
 
 local excluded = lpeg.P(false)
@@ -111,6 +111,7 @@ local minus = lpeg.V"minus"
 local neg = lpeg.V"neg"
 
 local stmt = lpeg.V"stmt"
+local ifStmt = lpeg.V"ifStmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 
@@ -123,7 +124,12 @@ grammar = lpeg.P{
   prog = space * stmts * -1,
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
-  stmt = T"@" * neg / node("print", "expr") + block + ID * Assgn * neg / node("assignment", "id", "expr") + RW"return" * neg / node("return", "expr"),
+  ifStmt = neg * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
+  stmt = T"@" * neg / node("print", "expr") +
+         block +
+         RW"if" * ifStmt +
+         ID * Assgn * neg / node("assignment", "id", "expr") +
+         RW"return" * neg / node("return", "expr"),
   expr = numeral + T"(" * cmp * T")" + var,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
@@ -204,6 +210,22 @@ function Compiler:var2num(id)
   return num
 end
 
+function Compiler:codeJmp(op)
+  self:addCode(op)
+  -- we don't know where the jump is jumping to
+  self:addCode(0)
+
+  return self:currentPosition()
+end
+
+function Compiler:currentPosition()
+  return #self.code
+end
+
+function Compiler:updateJmp(jmp)
+  self.code[jmp] = self:currentPosition() - jmp
+end
+
 function Compiler:codeExp(ast)
   if ast.tag == "number" then
     self:addCode("push")
@@ -244,6 +266,29 @@ function Compiler:codeStmt(ast)
   elseif ast.tag == "print" then
     self:codeExp(ast.expr)
     self:addCode("print")
+  elseif ast.tag == "if-then" then
+    -- condcondcond
+    -- condcondcond
+    -- jmpX
+    -- adress to skip if-cond if cond is falsy -> (%)
+    --- ifififififif
+    --- ifififififif
+    -- jmp
+    -- address to skip else-cond if cond is truthy -> codecodecode
+    --- elseelse (%)
+    --- elseelse
+    -- codecodecode
+    self:codeExp(ast.cond)
+    local jmpIf = self:codeJmp("jmpX")
+    self:codeStmt(ast.thenstmt)
+    if ast.elsestmt == nil then
+      self:updateJmp(jmpIf)
+    else
+      local jmpElse = self:codeJmp("jmp")
+      self:updateJmp(jmpIf)
+      self:codeStmt(ast.elsestmt)
+      self:updateJmp(jmpElse)
+    end
   else
     error("invalid statement")
   end
@@ -271,76 +316,88 @@ local function run (code, mem, stack)
       pc = pc + 1
       top = top + 1
       stack[top] = code[pc]
-      print("push "..stack[top])
+      print(pc..". push "..stack[top])
     elseif code[pc] == "add" then
-      print("add "..stack[top - 1].." "..stack[top])
+      print(pc..". add "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] + stack[top]
       top = top - 1
     elseif code[pc] == "sub" then
-      print("sub "..stack[top - 1].." "..stack[top])
+      print(pc..". sub "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] - stack[top]
       top = top - 1
     elseif code[pc] == "mul" then
-      print("mul "..stack[top - 1].." "..stack[top])
+      print(pc..". mul "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] * stack[top]
       top = top - 1
     elseif code[pc] == "div" then
-      print("div "..stack[top - 1].." "..stack[top])
+      print(pc..". div "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] / stack[top]
       top = top - 1
     elseif code[pc] == "rem" then
-      print("rem "..stack[top - 1].." "..stack[top])
+      print(pc..". rem "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] % stack[top]
       top = top - 1
     elseif code[pc] == "exp" then
-      print("exp "..stack[top - 1].." "..stack[top])
+      print(pc..". exp "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] ^ stack[top]
       top = top - 1
     elseif code[pc] == "eq" then
-      print("== "..stack[top - 1].." "..stack[top])
+      print(pc..". == "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] == stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "ne" then
-      print("!= "..stack[top - 1].." "..stack[top])
+      print(pc..". != "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] ~= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "lt" then
-      print("< "..stack[top - 1].." "..stack[top])
+      print(pc..". < "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] < stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "gt" then
-      print("> "..stack[top - 1].." "..stack[top])
+      print(pc..". > "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] > stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "lte" then
-      print("<= "..stack[top - 1].." "..stack[top])
+      print(pc..". <= "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] <= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "gte" then
-      print(">= "..stack[top - 1].." "..stack[top])
+      print(pc..". >= "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] >= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "minus" then
-      print("- "..stack[top])
+      print(pc..". - "..stack[top])
       stack[top] = -stack[top]
     elseif code[pc] == "not" then
-      print("not "..stack[top])
+      print(pc..". not "..stack[top])
       stack[top] = stack[top] == 0 and 1 or 0
     elseif code[pc] == "load" then
-      print("load "..code[pc+1])
+      print(pc..". load "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       top = top + 1
       stack[top] = mem[id]
     elseif code[pc] == "store" then
-      print("store "..code[pc+1])
+      print(pc..". store "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       mem[id] = stack[top]
       top = top - 1
     elseif code[pc] == "print" then
-      print("print")
+      print(pc..". print")
       print(stack[top])
+      top = top - 1
+    elseif code[pc] == "jmpX" then -- conditional jmp
+      print(pc..". jmpX "..code[pc+1])
+      pc = pc + 1
+      if stack[top] == 0 or stack[top] == nil then
+        pc = pc + code[pc] -- jump to position pc + code[pc]
+      end
+      top = top - 1
+    elseif code[pc] == "jmp" then
+      print(pc..". jmp "..(code[pc+1] - 1))
+      pc = pc + 1
+      pc = pc + code[pc]
       top = top - 1
     else
       error("unknown instruction "..inspect(code[pc]))
