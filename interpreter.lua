@@ -50,6 +50,20 @@ local function foldUnary(list)
   end
 end
 
+local function foldIndex(list)
+  local tree = list[1]
+
+  for i = 2, #list do
+    tree = { tag = "indexed", array = tree, index = list[i] }
+  end
+
+  return tree
+end
+
+local function foldNew(list)
+  return { tag = "new", dimensions = { tag = "number", val = #list } , size = list }
+end
+
 local singlelineComment = "#" * (lpeg.P(1) - "\n")^0
 local multilineComment = "#{" * (lpeg.P(1) - "#}")^0 * "#}"
 local comment = multilineComment + singlelineComment
@@ -139,8 +153,8 @@ grammar = lpeg.P{
          whileStmt +
          lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
-  lhs = var * T"[" * log * T"]" / node("indexed", "array", "index") + var,
-  expr = RW"new" * T"[" * log * T"]" / node("new", "size") +
+  lhs = lpeg.Ct( var * ( T"[" * log * T"]" )^0  ) / foldIndex,
+  expr = RW"new" * lpeg.Ct( ( T"[" * log * T"]" )^1 ) / foldNew +
          numeral +
          T"(" * log * T")" +
          lhs,
@@ -303,7 +317,10 @@ function Compiler:codeExp(ast)
     self:codeExp(ast.index)
     self:addCode("getarray")
   elseif ast.tag == "new" then
-    self:codeExp(ast.size)
+    for i = 1, ast.dimensions.val do
+      self:codeExp(ast.size[i])
+    end
+    self:codeExp(ast.dimensions)
     self:addCode("newarray")
   elseif ast.tag == "unop" then
     self:codeExp(ast.right)
@@ -375,6 +392,18 @@ function Compiler:compile(ast)
   self:addCode("return")
 
   return self.code
+end
+
+local function initArray(sizes, current)
+  local current = current or 1
+  local array = { size = sizes[current] }
+  if current < #sizes then
+    for i = 1, array.size do
+      array[i] = initArray(sizes, current + 1)
+    end
+  end
+
+  return array
 end
 
 local function run (code, mem, stack)
@@ -457,21 +486,18 @@ local function run (code, mem, stack)
       top = top - 1
     elseif code[pc] == "print" then
       print(pc..". print")
-      if stack[top] == nil then
-        print("nil")
-      elseif type(stack[top]) == "table" and stack[top].size then
-        local str = "[ "
-        for i = 1, stack[top].size do
-          str = str..(stack[top][i] or 'nil')..' '
-        end
-        print(str.."]")
-      else
-        print(stack[top])
-      end
+      print(inspect(stack[top]))
       top = top - 1
     elseif code[pc] == "newarray" then
-      local size = stack[top]
-      stack[top] = { size = size } -- simple substitution
+      local dimensions = stack[top]
+      top = top - 1
+      local sizes = {}
+      for i = dimensions, 1, -1 do
+        sizes[i] = stack[top]
+        top = top - 1
+      end
+      top = top + 1
+      stack[top] = initArray(sizes)
     elseif code[pc] == "getarray" then
       local array = stack[top - 1]
       local index = stack[top]
