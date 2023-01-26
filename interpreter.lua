@@ -9,18 +9,18 @@ local function I (msg)
   return lpeg.P(function () print(msg); return true end)
 end
 
-local function node(tag, ...)
+local function node (tag, ...)
   local labels = table.pack(...)
-  local params = table.concat(labels, ", ")
-  local fields = string.gsub(params, "(%w+)", "%1 = %1")
 
-  local code = string.format(
-    "return function (%s) return { tag = \"%s\", %s } end",
-    params, tag, fields
-  )
+  return function (...)
+    local params = table.pack(...)
+    local t = { tag = tag }
+    for i = 1, #labels do
+      t[labels[i]] = params[i]
+    end
 
-  -- print(code)
-  return assert(load(code))()
+    return t
+  end
 end
 
 -- stmt2 is optional
