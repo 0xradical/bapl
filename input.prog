@@ -1,6 +1,4 @@
-function foo () {
-  return 23;
-}
+function foo ();
 
 function main() {
   foo();
@@ -13,4 +11,8 @@ function main() {
   @ a;
 
   return 2 + foo();
+}
+
+function foo() {
+  return 23;
 }

@@ -147,7 +147,7 @@ grammar = lpeg.P{
   "prog",
   -- prog = space * stmts * -1,
   prog = space * lpeg.Ct( funcDecl^1 ) * -1,
-  funcDecl = RW"function" * ID * T"(" * T")" * block / node("function", "name", "body"),
+  funcDecl = RW"function" * ID * T"(" * T")" * ( T";" + block ) / node("function", "name", "body"),
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
@@ -414,17 +414,28 @@ function Compiler:codeStmt(ast)
 end
 
 function Compiler:codeFunction(ast)
+  local fn = self.funcs[ast.name]
   local code = {}
-  if self.funcs[ast.name] then
-    error("function '"..ast.name.."' is declared more than once")
+
+  -- forward declaration
+  if fn then
+    code = fn.code
+  else
+    fn = { code = code, defined = false }
+    self.funcs[ast.name] = fn
   end
-  self.funcs[ast.name] = { code = code }
-  self.code = code
-  self:codeStmt(ast.body)
-    -- final 'return 0' in case the function has no final return
-  self:addCode("push")
-  self:addCode(0)
-  self:addCode("return")
+
+  if fn.defined then
+    error("function '"..ast.name.."' is defined more than once")
+  elseif ast.body then -- if it has a body then define function
+    fn.defined = true
+    self.code = code
+    self:codeStmt(ast.body)
+      -- final 'return 0' in case the function has no final return
+    self:addCode("push")
+    self:addCode(0)
+    self:addCode("return")
+  end
 end
 
 function compile(ast)
