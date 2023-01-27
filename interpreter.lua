@@ -54,7 +54,7 @@ local function foldIndex(list)
   local tree = list[1]
 
   for i = 2, #list do
-    tree = { tag = "indexed", array = tree, index = list[i] }
+    tree = { tag = "indexed", var = tree.var, array = tree, index = list[i] }
   end
 
   return tree
@@ -84,7 +84,7 @@ end
 local reservedWords = {
   "return", "if", "elsif", "else",
   "while", "and", "or", "new",
-  "function"
+  "function", "var"
 }
 
 local excluded = lpeg.P(false)
@@ -154,6 +154,7 @@ grammar = lpeg.P{
   whileStmt = RW"while" * log * block / node("while-loop", "cond", "body"),
   stmt = T"@" * log / node("print", "expr") +
          block +
+         RW"var" * ID *  ( T"=" * log )^0 / node("local", "name", "init") + -- var is used for "local" variables
          RW"if" * ifStmt +
          whileStmt +
          call +
@@ -209,6 +210,8 @@ local Compiler = {
   -- code = {},
   funcs = {},
   vars = {},
+  locals = {}, -- list of active locals, naturally empty at the beginning of a function call
+  _locals = {}, -- list of active locals, but in a hash table format, to aid in lookups
   nvars = 0
 }
 
@@ -263,6 +266,17 @@ function Compiler:codeJmp(op)
   return self:currentPosition()
 end
 
+function Compiler:findLocal(name)
+  local loc = self.locals
+  for i = #loc, 1, -1 do
+    if name == loc[i] then
+      return i
+    end
+  end
+
+  return nil
+end
+
 function Compiler:currentPosition()
   return #self.code
 end
@@ -274,13 +288,23 @@ end
 function Compiler:codeAssgn(ast)
   local lhs = ast.lhs
 
+  if self.funcs[lhs.var] then
+    error("Can't use '"..lhs.var.."' as a variable name, function exists")
+  end
+
   if lhs.tag == "variable" then
     self:codeExp(ast.expr)
-    self:addCode("store")
-    if self.funcs[lhs.var] then
-      error("Can't use '"..lhs.var.."' as a variable name, function exists")
+
+    local idx = self:findLocal(lhs.var)
+
+    if idx then
+      self:addCode("storeL")
+      self:addCode(idx)
+    else
+      -- store as a global variable
+      self:addCode("store")
+      self:addCode(self:var2num(lhs.var))
     end
-    self:addCode(self:var2num(lhs.var))
   elseif lhs.tag == "indexed" then
     self:codeExp(lhs.array)
     self:codeExp(lhs.index)
@@ -293,7 +317,22 @@ end
 
 function Compiler:codeBlock(ast)
   if ast.body ~= '{}' then
+    local localsBefore = #self.locals
     self:codeStmt(ast.body)
+    local localsAfter = #self.locals
+    local diff = localsAfter - localsBefore
+    if diff > 0 then
+      for i = 1, diff do
+        -- self._locals[self.locals[#self.locals]] = nil
+        table.remove(self.locals)
+      end
+
+      -- pop the extra variables, i.e.,
+      -- move the stack pointer to
+      -- where it was
+      self:addCode("pop")
+      self:addCode(diff)
+    end
   end -- else it's an empty block
 end
 
@@ -336,11 +375,18 @@ function Compiler:codeExp(ast)
       self:addCode(op)
     end
   elseif ast.tag == "variable" then
-    self:addCode("load")
-    if self.vars[ast.var] == nil then
-      error("variable "..ast.var.." has not been declared")
+    local idx = self:findLocal(ast.var)
+
+    if idx then
+      self:addCode("loadL")
+      self:addCode(idx)
     else
-      self:addCode(self:var2num(ast.var))
+      if self.vars[ast.var] == nil then
+        error("variable "..ast.var.." has not been declared")
+      else
+        self:addCode("load")
+        self:addCode(self:var2num(ast.var))
+      end
     end
   elseif ast.tag == "indexed" then
     self:codeExp(ast.array)
@@ -377,6 +423,7 @@ function Compiler:codeStmt(ast)
   elseif ast.tag == "return" then
     self:codeExp(ast.expr)
     self:addCode("return")
+    self:addCode(#self.locals)
   elseif ast.tag == "print" then
     self:codeExp(ast.expr)
     self:addCode("print")
@@ -414,6 +461,15 @@ function Compiler:codeStmt(ast)
     self:codeCall(ast)
     self:addCode("pop")
     self:addCode(1)
+  elseif ast.tag == "local" then
+    if ast.init then
+      self:codeExp(ast.init)
+    else
+      self:addCode("push")
+      self:addCode(0)
+    end
+    self.locals[#self.locals + 1] = ast.name
+    self._locals[ast.name] = true
   else
     error("Invalid statement: unknown tag '"..ast.tag.."'")
   end
@@ -441,21 +497,34 @@ function Compiler:codeFunction(ast)
     self:addCode("push")
     self:addCode(0)
     self:addCode("return")
+    self:addCode(#self.locals)
   end
 end
 
 function compile(ast)
+  local j = 0
+  -- compile all functions before main
   for i = 1, #ast do
-    Compiler:codeFunction(ast[i])
+    if ast[i].name ~= "main" then
+      Compiler:codeFunction(ast[i])
+    else
+      j = i
+    end
   end
 
-  local mainFunc = Compiler.funcs['main']
-
-  if not mainFunc then
+  -- then compile 'main'
+  -- the order matters because
+  -- the compiler registers the numbers of
+  -- local variables in all functions after "return"
+  -- if a function comes after main, then the number
+  -- might be incorrect
+  if j > 0 then
+    Compiler:codeFunction(ast[j])
+  else
     error("function 'main' not found")
   end
 
-  return mainFunc.code
+  return Compiler.funcs['main'].code
 end
 
 local function initArray(sizes, current)
@@ -473,9 +542,20 @@ end
 local function run (code, mem, stack, top)
   -- program counter
   local pc = 1
+  -- the relative index 1 for the current "run" call
+  -- used to calculate the position of a local var
+  local base = top
   while true do
+    ---[[
+      io.write("--> ")
+      for i = 1, top do io.write(pt(stack[i]), " ") end
+      io.write("\n", code[pc], "\n")
+      --]]
     if code[pc] == "return" then
-      return top
+      -- first remove all locals
+      local n = code[pc + 1] -- number of local variables
+      stack[top - n] = stack[top]
+      return top - n
     elseif code[pc] == "call" then
       pc = pc + 1
       local code = code[pc]
@@ -487,75 +567,67 @@ local function run (code, mem, stack, top)
       pc = pc + 1
       top = top + 1
       stack[top] = code[pc]
-      print(pc..". push "..stack[top])
     elseif code[pc] == "add" then
-      print(pc..". add "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] + stack[top]
       top = top - 1
     elseif code[pc] == "sub" then
-      print(pc..". sub "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] - stack[top]
       top = top - 1
     elseif code[pc] == "mul" then
-      print(pc..". mul "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] * stack[top]
       top = top - 1
     elseif code[pc] == "div" then
-      print(pc..". div "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] / stack[top]
       top = top - 1
     elseif code[pc] == "rem" then
-      print(pc..". rem "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] % stack[top]
       top = top - 1
     elseif code[pc] == "exp" then
-      print(pc..". exp "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] ^ stack[top]
       top = top - 1
     elseif code[pc] == "eq" then
-      print(pc..". == "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] == stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "ne" then
-      print(pc..". != "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] ~= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "lt" then
-      print(pc..". < "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] < stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "gt" then
-      print(pc..". > "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] > stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "lte" then
-      print(pc..". <= "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] <= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "gte" then
-      print(pc..". >= "..stack[top - 1].." "..stack[top])
       stack[top - 1] = stack[top - 1] >= stack[top] and 1 or 0
       top = top - 1
     elseif code[pc] == "minus" then
-      print(pc..". - "..stack[top])
       stack[top] = -stack[top]
     elseif code[pc] == "not" then
-      print(pc..". not "..stack[top])
       stack[top] = stack[top] == 0 and 1 or 0
     elseif code[pc] == "load" then
-      print(pc..". load "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       top = top + 1
       stack[top] = mem[id]
+    elseif code[pc] == "loadL" then
+      pc = pc + 1
+      local idx = code[pc]
+      top = top + 1
+      stack[top] = stack[base + idx]
     elseif code[pc] == "store" then
-      print(pc..". store "..code[pc+1])
       pc = pc + 1
       local id = code[pc]
       mem[id] = stack[top]
       top = top - 1
+    elseif code[pc] == "storeL" then
+      pc = pc + 1
+      local idx = code[pc]
+      stack[base + idx] = stack[top]
+      top = top - 1
     elseif code[pc] == "print" then
-      print(pc..". print")
       print(inspect(stack[top]))
       top = top - 1
     elseif code[pc] == "newarray" then
@@ -577,6 +649,7 @@ local function run (code, mem, stack, top)
       stack[top - 1] = array[index]
       top = top - 1
     elseif code[pc] == "setarray" then
+      print(inspect(stack).." @ "..top)
       local array  = stack[top - 2]
       local index = stack[top  - 1]
       if index > array.size then
@@ -586,19 +659,16 @@ local function run (code, mem, stack, top)
       array[index] = value
       top = top - 3
     elseif code[pc] == "jmpX" then -- conditional jmp
-      print(pc..". jmpX "..code[pc+1])
       pc = pc + 1
       if stack[top] == 0 or stack[top] == nil then
         pc = pc + code[pc] -- jump to position pc + code[pc]
       end
       top = top - 1
     elseif code[pc] == "jmp" then
-      print(pc..". jmp "..(code[pc+1] - 1))
       pc = pc + 1
       pc = pc + code[pc]
       top = top - 1
     elseif code[pc] == "jmpZP" then -- and
-      print(pc..". jmpZP "..(code[pc+1] - 1))
       pc = pc + 1
       if stack[top] == 0 or stack[top] == nil then
         pc = pc + code[pc] -- skip if 0
@@ -606,7 +676,6 @@ local function run (code, mem, stack, top)
         top = top - 1 -- evaluate next value on the stack if != 0
       end
     elseif code[pc] == "jmpNZP" then -- or
-      print(pc..". jmpNZP "..(code[pc+1] - 1))
       pc = pc + 1
       if stack[top] == 0 or stack[top] == nil then
         top = top - 1 -- evaluate next value on the stack if == 0
@@ -631,6 +700,9 @@ print("CODE\n\n"..pt(code).."\n")
 local stack = {}
 local mem = {}
 ret = run(code, mem, stack, 0)
-
+io.write("--> ")
+for i = 1, ret do io.write(stack[i], " ") end
+io.write("\n\n")
 print("Variables: "..inspect(mem.result))
-print("Return Value: "..pt(stack[ret]))
+print("Top: "..ret)
+print("Return: "..pt(stack[ret]))

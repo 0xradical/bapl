@@ -1,19 +1,19 @@
-function foo ();
+function foo();
 
 function main() {
-  {};
-  foo();
-  a = new[2][3][1];
+  y  = 2;
+  var x;
+  z = new[3];
 
-  a[1][1][1] = 2;
-  a[2][2][1] = 4;
-  a[2][3][1] = 6 + foo();
+  var a = 2 + foo();
 
-  @ a;
-
-  return 2 + foo();
+  return foo();
 }
 
 function foo() {
-  return 23;
+  var y = 3;
+
+  y = y + 1;
+
+  return y + 23;
 }
