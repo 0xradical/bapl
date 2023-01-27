@@ -138,6 +138,8 @@ local block = lpeg.V"block"
 local log = lpeg.V"log"
 local funcDecl = lpeg.V"funcDecl"
 local call = lpeg.V"call"
+local params = lpeg.V"params" -- function definition
+local args = lpeg.V"args" -- function call
 
 -- used to track max characters matched before
 -- erroring out
@@ -147,7 +149,8 @@ grammar = lpeg.P{
   "prog",
   -- prog = space * stmts * -1,
   prog = space * lpeg.Ct( funcDecl^1 ) * -1,
-  funcDecl = RW"function" * ID * T"(" * T")" * ( T";" + block ) / node("function", "name", "body"),
+  funcDecl = RW"function" * ID * ( T";" + T"(" * params * T")" * block ) / node("function", "name", "params", "body"),
+  params = lpeg.Ct( ( ID * ( T"," * ID )^0)^-1  ),
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * T"}" / node("block", "body") + T"{" * stmts * T"}" / node("block", "body"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
@@ -161,7 +164,8 @@ grammar = lpeg.P{
          lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
   lhs = lpeg.Ct( var * ( T"[" * log * T"]" )^0  ) / foldIndex,
-  call = ID * T"(" * T")" / node("call", "fname"),
+  call = ID * T"(" * args * T")" / node("call", "fname", "args"),
+  args = lpeg.Ct( ( log * ( T"," * log )^0)^-1  ),
   expr = RW"new" * lpeg.Ct( ( T"[" * log * T"]" )^1 ) / foldNew +
          numeral +
          T"(" * log * T")" +
@@ -211,8 +215,9 @@ local Compiler = {
   funcs = {},
   vars = {},
   locals = {}, -- list of active locals, naturally empty at the beginning of a function call
-  _locals = {}, -- list of active locals, but in a hash table format, to aid in lookups
-  nvars = 0
+  nvars = 0,
+  currentBlock = {},
+  currentFn = {}
 }
 
 function Compiler:addCode(op)
@@ -316,6 +321,9 @@ function Compiler:codeAssgn(ast)
 end
 
 function Compiler:codeBlock(ast)
+  self.currentBlock = ast
+  self.currentBlock.vars = self.currentBlock.vars or {}
+
   if ast.body ~= '{}' then
     local localsBefore = #self.locals
     self:codeStmt(ast.body)
@@ -323,7 +331,6 @@ function Compiler:codeBlock(ast)
     local diff = localsAfter - localsBefore
     if diff > 0 then
       for i = 1, diff do
-        -- self._locals[self.locals[#self.locals]] = nil
         table.remove(self.locals)
       end
 
@@ -462,6 +469,21 @@ function Compiler:codeStmt(ast)
     self:addCode("pop")
     self:addCode(1)
   elseif ast.tag == "local" then
+    if self.currentBlock.vars[ast.name] then
+      error("Local variable named '"..ast.name.."' has already been declared")
+    elseif self.currentFn then
+      -- look for variable in fn params
+      for i = 1, #self.currentFn.params do
+        if self.currentFn.params[i] == ast.name then
+          error("Local variable '"..ast.name.."' cannot be used, a parameter with that name exists in function '"..self.currentFn.name.."'")
+        end
+      end
+
+      self.currentBlock.vars[ast.name] = true
+    else
+      self.currentBlock.vars[ast.name] = true
+    end
+
     if ast.init then
       self:codeExp(ast.init)
     else
@@ -469,7 +491,6 @@ function Compiler:codeStmt(ast)
       self:addCode(0)
     end
     self.locals[#self.locals + 1] = ast.name
-    self._locals[ast.name] = true
   else
     error("Invalid statement: unknown tag '"..ast.tag.."'")
   end
@@ -492,7 +513,9 @@ function Compiler:codeFunction(ast)
   elseif ast.body then -- if it has a body then define function
     fn.defined = true
     self.code = code
+    self.currentFn = ast
     self:codeStmt(ast.body)
+    self.currentFn = {}
       -- final 'return 0' in case the function has no final return
     self:addCode("push")
     self:addCode(0)

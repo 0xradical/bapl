@@ -1,4 +1,5 @@
-function foo();
+# forward declaration
+function foo ;
 
 function main() {
   y  = 2;
@@ -6,12 +7,18 @@ function main() {
   z = new[3];
 
   var a = 2 + foo();
+  {
+    var a = 3;
+    @ a;
+  };
 
-  return foo();
+
+  return foo(1);
 }
 
-function foo() {
+function foo(w, o) {
   var y = 3;
+  var w;
 
   y = y + 1;
 
