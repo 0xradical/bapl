@@ -276,6 +276,9 @@ function Compiler:codeAssgn(ast)
   if lhs.tag == "variable" then
     self:codeExp(ast.expr)
     self:addCode("store")
+    if self.funcs[lhs.var] then
+      error("Can't use '"..lhs.var.."' as a variable name, function exists")
+    end
     self:addCode(self:var2num(lhs.var))
   elseif lhs.tag == "indexed" then
     self:codeExp(lhs.array)
