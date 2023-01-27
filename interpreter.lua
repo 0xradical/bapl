@@ -156,6 +156,7 @@ grammar = lpeg.P{
          block +
          RW"if" * ifStmt +
          whileStmt +
+         call +
          lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
   lhs = lpeg.Ct( var * ( T"[" * log * T"]" )^0  ) / foldIndex,
@@ -403,6 +404,10 @@ function Compiler:codeStmt(ast)
     self:codeStmt(ast.body)
     self:jmpTo("jmp", ilabel - self:currentPosition() - 2) -- back to conditional
     self:updateJmp(jmp)
+  elseif ast.tag == "call" then
+    self:codeCall(ast)
+    self:addCode("pop")
+    self:addCode(1)
   else
     error("Invalid statement: unknown tag '"..ast.tag.."'")
   end
@@ -458,6 +463,9 @@ local function run (code, mem, stack, top)
       pc = pc + 1
       local code = code[pc]
       top = run(code, mem, stack, top)
+    elseif code[pc] == "pop" then
+      pc = pc + 1
+      top = top - code[pc]
     elseif code[pc] == "push" then
       pc = pc + 1
       top = top + 1

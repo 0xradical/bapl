@@ -3,7 +3,7 @@ function foo () {
 }
 
 function main() {
-  foo = 2;
+  foo();
   a = new[2][3][1];
 
   a[1][1][1] = 2;
