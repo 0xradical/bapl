@@ -83,7 +83,8 @@ end
 -- reserved words like return , if , else, etc
 local reservedWords = {
   "return", "if", "elsif", "else",
-  "while", "and", "or", "new"
+  "while", "and", "or", "new",
+  "function"
 }
 
 local excluded = lpeg.P(false)
@@ -107,7 +108,7 @@ local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
 local numeral = ( scientific + floating  + hex + decimal ) / tonumber / node("number", "val") * space
 
-local ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space
+local ID = lpeg.V"ID"
 local var = ( ID / node("variable", "var") ) * space
 
 local opAdd = lpeg.C(lpeg.S"+-") * space
@@ -135,6 +136,8 @@ local whileStmt = lpeg.V"whileStmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 local log = lpeg.V"log"
+local funcDecl = lpeg.V"funcDecl"
+local call = lpeg.V"call"
 
 -- used to track max characters matched before
 -- erroring out
@@ -142,7 +145,9 @@ local maxmatch = 0
 
 grammar = lpeg.P{
   "prog",
-  prog = space * stmts * -1,
+  -- prog = space * stmts * -1,
+  prog = space * lpeg.Ct( funcDecl^1 ) * -1,
+  funcDecl = RW"function" * ID * T"(" * T")" * block / node("function", "name", "body"),
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
@@ -154,9 +159,11 @@ grammar = lpeg.P{
          lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
   lhs = lpeg.Ct( var * ( T"[" * log * T"]" )^0  ) / foldIndex,
+  call = ID * T"(" * T")" / node("call", "fname"),
   expr = RW"new" * lpeg.Ct( ( T"[" * log * T"]" )^1 ) / foldNew +
          numeral +
          T"(" * log * T")" +
+         call +
          lhs,
   minus = lpeg.Ct( opUn * minus  + expr ) / foldUnary,
   pow = lpeg.Ct( minus * ( opPow * minus )^0 ) / foldBin,
@@ -165,6 +172,7 @@ grammar = lpeg.P{
   cmp = lpeg.Ct ( term * ( opCmp * term )^0 ) / foldBin,
   neg =  lpeg.Ct( opNot * neg  + cmp ) / foldUnary,
   log = lpeg.Ct ( neg * ( opLog * neg )^0 ) / foldBin,
+  ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space,
   space = ( locale.space + comment )^0 * lpeg.P(
     function (_, p)
       maxmatch = math.max(p, maxmatch)
@@ -197,7 +205,8 @@ end
 
 
 local Compiler = {
-  code = {},
+  -- code = {},
+  funcs = {},
   vars = {},
   nvars = 0
 }
@@ -278,6 +287,17 @@ function Compiler:codeAssgn(ast)
   end
 end
 
+function Compiler:codeCall(ast)
+  local func = self.funcs[ast.fname]
+
+  if not func then
+    error("Undefined function '"..ast.fname.."'")
+  end
+
+  self:addCode("call")
+  self:addCode(func.code)
+end
+
 function Compiler:codeExp(ast)
   if ast.tag == "number" then
     self:addCode("push")
@@ -329,6 +349,8 @@ function Compiler:codeExp(ast)
       os.exit(1)
     end
     self:addCode(unops[ast.op])
+  elseif ast.tag == "call" then
+    self:codeCall(ast)
   else
     error("Invalid expression: unknown tag '"..ast.tag.."'")
   end
@@ -379,19 +401,36 @@ function Compiler:codeStmt(ast)
     self:jmpTo("jmp", ilabel - self:currentPosition() - 2) -- back to conditional
     self:updateJmp(jmp)
   else
-    error("invalid statement")
+    error("Invalid statement: unknown tag '"..ast.tag.."'")
   end
 end
 
-function Compiler:compile(ast)
-  self:codeStmt(ast)
-
-  -- final 'return 0' in case the program has no final return
+function Compiler:codeFunction(ast)
+  local code = {}
+  if self.funcs[ast.name] then
+    error("function '"..ast.name.."' is declared more than once")
+  end
+  self.funcs[ast.name] = { code = code }
+  self.code = code
+  self:codeStmt(ast.body)
+    -- final 'return 0' in case the function has no final return
   self:addCode("push")
   self:addCode(0)
   self:addCode("return")
+end
 
-  return self.code
+function compile(ast)
+  for i = 1, #ast do
+    Compiler:codeFunction(ast[i])
+  end
+
+  local mainFunc = Compiler.funcs['main']
+
+  if not mainFunc then
+    error("function 'main' not found")
+  end
+
+  return mainFunc.code
 end
 
 local function initArray(sizes, current)
@@ -406,13 +445,16 @@ local function initArray(sizes, current)
   return array
 end
 
-local function run (code, mem, stack)
+local function run (code, mem, stack, top)
   -- program counter
   local pc = 1
-  local top = 0
   while true do
     if code[pc] == "return" then
-      return stack[top]
+      return top
+    elseif code[pc] == "call" then
+      pc = pc + 1
+      local code = code[pc]
+      top = run(code, mem, stack, top)
     elseif code[pc] == "push" then
       pc = pc + 1
       top = top + 1
@@ -555,12 +597,12 @@ local input = io.read("a")
 local ast = parse(input)
 print("AST\n\n"..pt(ast).."\n")
 -- code is a tree representing the operations
-local code = Compiler:compile(ast)
+local code = compile(ast)
 print("CODE\n\n"..pt(code).."\n")
 -- -- stack is where the values are manipulates
 local stack = {}
 local mem = {}
-ret = run(code, mem, stack)
+ret = run(code, mem, stack, 0)
 
-print("RESULT: "..pt(mem.result))
-print("RETURN: "..pt(ret))
+print("Variables: "..inspect(mem.result))
+print("Return Value: "..pt(stack[ret]))
