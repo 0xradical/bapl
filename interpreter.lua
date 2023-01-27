@@ -350,6 +350,10 @@ function Compiler:codeCall(ast)
     error("Undefined function '"..ast.fname.."'")
   end
 
+  if #func.params ~= #ast.args then
+    error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.params.." arguments, got "..#ast.args)
+  end
+
   self:addCode("call")
   self:addCode(func.code)
 end
@@ -497,10 +501,14 @@ function Compiler:codeStmt(ast)
 end
 
 function Compiler:codeFunction(ast)
+  if ast.name == "main" and #ast.params > 0 then
+    error("Function 'main' can't have any parameters")
+  end
+
   local fn = self.funcs[ast.name]
   local code = {}
 
-  -- forward declaration
+  -- forward declaration setup
   if fn then
     code = fn.code
   else
@@ -512,6 +520,7 @@ function Compiler:codeFunction(ast)
     error("function '"..ast.name.."' is defined more than once")
   elseif ast.body then -- if it has a body then define function
     fn.defined = true
+    fn.params = ast.params
     self.code = code
     self.currentFn = ast
     self:codeStmt(ast.body)
@@ -521,6 +530,10 @@ function Compiler:codeFunction(ast)
     self:addCode(0)
     self:addCode("return")
     self:addCode(#self.locals)
+  else
+    if ast.name == "main" then
+      error("Function 'main' can't be forward declared")
+    end
   end
 end
 
