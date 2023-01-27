@@ -28,7 +28,7 @@ local function nodeStmts (stmt1, stmt2)
   if stmt2 == nil then
     return stmt1
   else
-    return { tag = "sequence", stmt1 = stmt1, stmt2 = stmt2 }
+    return { tag = "stmts", stmt1 = stmt1, stmt2 = stmt2 }
   end
 end
 
@@ -149,7 +149,7 @@ grammar = lpeg.P{
   prog = space * lpeg.Ct( funcDecl^1 ) * -1,
   funcDecl = RW"function" * ID * T"(" * T")" * ( T";" + block ) / node("function", "name", "body"),
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
-  block = T"{" * stmts * T"}" + T"{" * T"}" / node("emptyBlock"),
+  block = T"{" * T"}" / node("block", "body") + T"{" * stmts * T"}" / node("block", "body"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
   whileStmt = RW"while" * log * block / node("while-loop", "cond", "body"),
   stmt = T"@" * log / node("print", "expr") +
@@ -291,6 +291,12 @@ function Compiler:codeAssgn(ast)
   end
 end
 
+function Compiler:codeBlock(ast)
+  if ast.body ~= '{}' then
+    self:codeStmt(ast.body)
+  end -- else it's an empty block
+end
+
 function Compiler:codeCall(ast)
   local func = self.funcs[ast.fname]
 
@@ -363,11 +369,11 @@ end
 function Compiler:codeStmt(ast)
   if ast.tag == "assignment" then
     self:codeAssgn(ast)
-  elseif ast.tag == "sequence" then
+  elseif ast.tag == "stmts" then
     self:codeStmt(ast.stmt1)
     self:codeStmt(ast.stmt2)
-  elseif ast.tag == "emptyBlock" then
-    -- do nothing
+  elseif ast.tag == "block" then
+    self:codeBlock(ast)
   elseif ast.tag == "return" then
     self:codeExp(ast.expr)
     self:addCode("return")

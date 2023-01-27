@@ -1,6 +1,7 @@
 function foo ();
 
 function main() {
+  {};
   foo();
   a = new[2][3][1];
 
