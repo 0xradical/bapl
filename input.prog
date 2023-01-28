@@ -1,25 +1,11 @@
-# forward declaration
-function foo ;
-
 function main() {
-  y  = 2;
-  var x;
-  z = new[3];
-
-  var a = 2 + foo(1, 2);
-  {
-    var a = 3;
-    @ a;
-  };
-
-
-  return foo(1, 2);
+  return fact(6);
 }
 
-function foo(w, o) {
-  var y = 3;
-
-  y = y + 1;
-
-  return y + 23;
+function fact(n) {
+  if n <= 1 {
+    return 1;
+  } else {
+    return n * fact( n - 1 );
+  }
 }

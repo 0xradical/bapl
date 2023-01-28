@@ -216,6 +216,7 @@ local Compiler = {
   vars = {},
   locals = {}, -- list of active locals, naturally empty at the beginning of a function call
   nvars = 0,
+  params = {}, -- current function params
   currentBlock = {},
   currentFn = {}
 }
@@ -258,24 +259,19 @@ function Compiler:var2num(id)
   return num
 end
 
-function Compiler:jmpTo(op, label)
-  self:addCode(op)
-  self:addCode(label)
-end
-
-function Compiler:codeJmp(op)
-  -- we don't know where the jump is jumping to
-  -- so we initialize it with a zero
-  self:jmpTo(op, 0)
-
-  return self:currentPosition()
-end
-
 function Compiler:findLocal(name)
   local loc = self.locals
+  -- backwards so that we check for inner blocks first
   for i = #loc, 1, -1 do
     if name == loc[i] then
       return i
+    end
+  end
+
+  -- check in parameters
+  for i = 1, #self.params do
+    if name == self.params[i]  then
+      return - ( #self.params - i ) -- because base points to the last param, if exists
     end
   end
 
@@ -284,6 +280,19 @@ end
 
 function Compiler:currentPosition()
   return #self.code
+end
+
+function Compiler:jmpTo(op, offset)
+  self:addCode(op)
+  self:addCode(offset)
+end
+
+function Compiler:codeJmp(op)
+  -- we don't know where the jump is jumping to
+  -- so we initialize it with a zero
+  self:jmpTo(op, 0)
+
+  return self:currentPosition()
 end
 
 function Compiler:updateJmp(jmp)
@@ -354,6 +363,10 @@ function Compiler:codeCall(ast)
     error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.params.." arguments, got "..#ast.args)
   end
 
+  for i = 1, #ast.args do
+    self:codeExp(ast.args[i])
+  end
+
   self:addCode("call")
   self:addCode(func.code)
 end
@@ -363,7 +376,7 @@ function Compiler:codeExp(ast)
     self:addCode("push")
     self:addCode(ast.val)
   elseif ast.tag == "binop" then
-    op = ops[ast.op]
+    local op = ops[ast.op]
 
     if op == nil then
       error("Binary operation '"..ast.op.."' is not defined")
@@ -434,7 +447,7 @@ function Compiler:codeStmt(ast)
   elseif ast.tag == "return" then
     self:codeExp(ast.expr)
     self:addCode("return")
-    self:addCode(#self.locals)
+    self:addCode(#self.locals + #self.params)
   elseif ast.tag == "print" then
     self:codeExp(ast.expr)
     self:addCode("print")
@@ -453,6 +466,7 @@ function Compiler:codeStmt(ast)
     self:codeExp(ast.cond)
     local jmpIf = self:codeJmp("jmpX")
     self:codeStmt(ast.thenstmt)
+
     if ast.elsestmt == nil then
       self:updateJmp(jmpIf)
     else
@@ -520,8 +534,9 @@ function Compiler:codeFunction(ast)
     error("function '"..ast.name.."' is defined more than once")
   elseif ast.body then -- if it has a body then define function
     fn.defined = true
-    fn.params = ast.params
+    fn.params = ast.params -- to check params number
     self.code = code
+    self.params = ast.params -- to look for a var in params
     self.currentFn = ast
     self:codeStmt(ast.body)
     self.currentFn = {}
@@ -529,7 +544,7 @@ function Compiler:codeFunction(ast)
     self:addCode("push")
     self:addCode(0)
     self:addCode("return")
-    self:addCode(#self.locals)
+    self:addCode(#self.locals + #self.params)
   else
     if ast.name == "main" then
       error("Function 'main' can't be forward declared")
