@@ -108,6 +108,7 @@ local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
 local numeral = ( scientific + floating  + hex + decimal ) / tonumber / node("number", "val") * space
+local str = lpeg.P("\"") * ( ( (1 - lpeg.S('"\r\n\f\\')) + lpeg.P('\\') * 1 )^0 / node("str", "val") ) * lpeg.P("\"") * space
 
 local ID = lpeg.V"ID"
 local var = ( ID / node("variable", "var") ) * space
@@ -178,6 +179,7 @@ grammar = lpeg.P{
   args = lpeg.Ct( ( log * ( T"," * log )^0)^-1  ),
   expr = RW"new" * lpeg.Ct( ( T"[" * log * T"]" )^1 ) / foldNew +
          numeral +
+         str +
          T"(" * log * T")" +
          call +
          lhs,
@@ -392,6 +394,9 @@ function Compiler:codeExp(ast)
   if ast.tag == "number" then
     self:addCode("push")
     self:addCode(ast.val)
+  elseif ast.tag == "str" then
+    self:addCode("push")
+    self:addCode(ast.val)
   elseif ast.tag == "binop" then
     local op = ops[ast.op]
 
@@ -504,7 +509,6 @@ function Compiler:codeStmt(ast)
     self:addCode("pop")
     self:addCode(1)
   elseif ast.tag == "switch-case" then
-    local switchJmp = self:codeJmp("jmp")
     local cases = {}
 
     self:codeExp(ast.expr)
@@ -689,7 +693,20 @@ local function run (code, mem, stack, top)
       top = top + 1
       stack[top] = code[pc]
     elseif code[pc] == "add" then
-      stack[top - 1] = stack[top - 1] + stack[top]
+      local left = stack[top - 1]
+      local right = stack[top]
+
+      if type(left) == type(right) then
+        if type(left) == "string" then
+          stack[top - 1] = stack[top - 1]..stack[top]
+        else
+          stack[top - 1] = stack[top - 1] + stack[top]
+        end
+      else
+        -- don't do implicit coercion for now
+        error("+: "..right.." ("..type(right)..") can't be coerced to "..type(left))
+      end
+
       top = top - 1
     elseif code[pc] == "sub" then
       stack[top - 1] = stack[top - 1] - stack[top]

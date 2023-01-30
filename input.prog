@@ -1,12 +1,13 @@
 function main() {
-  var x = 0;
+  var x = 0 + 5;
+  var y = "my string" + " is awesome";
 
   switch 0 {
     default:
       @ 5
   };
 
-  return 9;
+  return y;
 }
 
 function hello(x,y=1) {
