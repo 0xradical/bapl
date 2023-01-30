@@ -368,26 +368,32 @@ function Compiler:codeCall(ast)
   local func = self.funcs[ast.fname]
 
   if not func then
-    error("Undefined function '"..ast.fname.."'")
-  end
-
-  if #func.requiredParams > #ast.args then
-    error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.requiredParams.." arguments, got "..#ast.args)
-  end
-
-  for i = 1, #ast.args do
-    self:codeExp(ast.args[i])
-  end
-
-  -- add implicit args with default values
-  if #ast.args < #func.params then
-    for i = 1, #func.params - #ast.args do
-      self:codeExp(func.params[i + #func.params - #ast.args].default)
+    -- builtin functions
+    if ast.fname == "strlen" and #ast.args == 1 then
+      self:codeExp(ast.args[1])
+      self:addCode("strlen")
+    else
+      error("Undefined function '"..ast.fname.."' with "..#ast.args.." parameter"..(#ast.args > 1 and 's' or ''))
     end
-  end
+  else
+    if #func.requiredParams > #ast.args then
+      error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.requiredParams.." arguments, got "..#ast.args)
+    end
 
-  self:addCode("call")
-  self:addCode(func.code)
+    for i = 1, #ast.args do
+      self:codeExp(ast.args[i])
+    end
+
+    -- add implicit args with default values
+    if #ast.args < #func.params then
+      for i = 1, #func.params - #ast.args do
+        self:codeExp(func.params[i + #func.params - #ast.args].default)
+      end
+    end
+
+    self:addCode("call")
+    self:addCode(func.code)
+  end
 end
 
 function Compiler:codeExp(ast)
@@ -768,6 +774,11 @@ local function run (code, mem, stack, top)
     elseif code[pc] == "print" then
       print(inspect(stack[top]))
       top = top - 1
+    elseif code[pc] == "strlen" then
+      if type(stack[top]) ~= "string" then
+        error("Cannot call strlen on a "..type(stack[top]))
+      end
+      stack[top] = #stack[top]
     elseif code[pc] == "newarray" then
       local dimensions = stack[top]
       top = top - 1
