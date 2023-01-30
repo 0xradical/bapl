@@ -84,7 +84,8 @@ end
 local reservedWords = {
   "return", "if", "elsif", "else",
   "while", "and", "or", "new",
-  "function", "var"
+  "function", "var", "switch", "case",
+  "default"
 }
 
 local excluded = lpeg.P(false)
@@ -133,6 +134,9 @@ local neg = lpeg.V"neg"
 local stmt = lpeg.V"stmt"
 local ifStmt = lpeg.V"ifStmt"
 local whileStmt = lpeg.V"whileStmt"
+local switchStmt = lpeg.V"switchStmt"
+local caseStmt = lpeg.V"caseStmt"
+local defaultStmt = lpeg.V"defaultStmt"
 local stmts = lpeg.V"stmts"
 local block = lpeg.V"block"
 local log = lpeg.V"log"
@@ -157,11 +161,15 @@ grammar = lpeg.P{
   block = T"{" * T"}" / node("block", "body") + T"{" * stmts * T"}" / node("block", "body"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
   whileStmt = RW"while" * log * block / node("while-loop", "cond", "body"),
+  switchStmt = RW"switch" * log * T"{" * lpeg.Ct ( caseStmt^0 * defaultStmt^-1 ) * T"}" / node("switch-case", "expr", "cases"),
+  caseStmt = RW"case" * log * T":" * stmts^0 / node("case", "expr", "stmts"),
+  defaultStmt = RW"default" * T":" * stmts^1 / node("default", "stmts"),
   stmt = T"@" * log / node("print", "expr") +
          block +
          RW"var" * ID *  ( T"=" * log )^0 / node("local", "name", "init") + -- var is used for "local" variables
          RW"if" * ifStmt +
          whileStmt +
+         switchStmt +
          call +
          lhs * T"=" * log / node("assignment", "lhs", "expr") +
          RW"return" * log / node("return", "expr"),
@@ -495,6 +503,41 @@ function Compiler:codeStmt(ast)
     self:codeCall(ast)
     self:addCode("pop")
     self:addCode(1)
+  elseif ast.tag == "switch-case" then
+    local switchJmp = self:codeJmp("jmp")
+    local cases = {}
+
+    self:codeExp(ast.expr)
+    for i = 1, #ast.cases do
+      local case = ast.cases[i]
+
+      if i > 1 then
+        -- adjust previous case stmt jmpX to current position
+        self:updateJmp(cases[i - 1].nextCase)
+      end
+
+      if case.tag ~= "default" then
+        self:codeExp(case.expr)
+        self:addCode("eq") -- compare using equality
+      end
+
+      cases[i] = { nextCase = self:codeJmp("jmpX") } -- jump for the next case
+      self:codeStmt(case.stmts)
+
+      -- clean up the stack unless it's default
+      if case.tag ~= "default" then
+        self:addCode("pop")
+        self:addCode(2)
+      end
+
+      cases[i].postSwitch = self:codeJmp("jmp") -- jump for the whole switch
+    end
+
+    -- update jumps for each case stmt
+    -- to point to the end of the switch
+    for i = 1, #cases do
+      self:updateJmp(cases[i].postSwitch)
+    end
   elseif ast.tag == "local" then
     if self.currentBlock.vars[ast.name] then
       error("Local variable named '"..ast.name.."' has already been declared")

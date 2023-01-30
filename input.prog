@@ -1,5 +1,12 @@
 function main() {
-  return hello(2, 5)
+  var x = 0;
+
+  switch 0 {
+    default:
+      @ 5
+  };
+
+  return 9;
 }
 
 function hello(x,y=1) {
@@ -7,5 +14,3 @@ function hello(x,y=1) {
   @ y;
   return 2;
 }
-
-function world;
