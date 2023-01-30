@@ -595,6 +595,13 @@ function compile(ast)
     error("function 'main' not found")
   end
 
+  -- check for undefined forward-declared functions
+  for i = 1, #ast do
+    if not Compiler.funcs[ast[i].name].defined then
+      error("Function '"..ast[i].name.."' was declared but not defined")
+    end
+  end
+
   return Compiler.funcs['main'].code
 end
 

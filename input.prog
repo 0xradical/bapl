@@ -7,3 +7,5 @@ function hello(x,y=1) {
   @ y;
   return 2;
 }
+
+function world;
