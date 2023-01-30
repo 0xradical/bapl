@@ -1,11 +1,9 @@
 function main() {
-  return fact(6);
+  return hello(2, 5)
 }
 
-function fact(n) {
-  if n <= 1 {
-    return 1;
-  } else {
-    return n * fact( n - 1 );
-  }
+function hello(x,y=1) {
+  @ x;
+  @ y;
+  return 2;
 }

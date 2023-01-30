@@ -139,6 +139,7 @@ local log = lpeg.V"log"
 local funcDecl = lpeg.V"funcDecl"
 local call = lpeg.V"call"
 local params = lpeg.V"params" -- function definition
+local param = lpeg.V"param"
 local args = lpeg.V"args" -- function call
 
 -- used to track max characters matched before
@@ -150,7 +151,8 @@ grammar = lpeg.P{
   -- prog = space * stmts * -1,
   prog = space * lpeg.Ct( funcDecl^1 ) * -1,
   funcDecl = RW"function" * ID * ( T";" + T"(" * params * T")" * block ) / node("function", "name", "params", "body"),
-  params = lpeg.Ct( ( ID * ( T"," * ID )^0)^-1  ),
+  params = lpeg.Ct( ( param * ( T"," * param - T"," * param * "=" )^0 * ( T"," * ID * "=" * log / node("param", "name", "default") )^-1 )^-1  ),
+  param = ID / node("param", "name"),
   stmts = stmt * ( T";"^1 * stmts )^-1 * T";"^0 / nodeStmts, -- stmt1; stmt2; stmt3 ==> stmt1; ( stmt2; stmt3 )
   block = T"{" * T"}" / node("block", "body") + T"{" * stmts * T"}" / node("block", "body"),
   ifStmt = log * block * ( RW"elsif" * ifStmt + RW"else" * block )^-1 / node("if-then", "cond", "thenstmt", "elsestmt"),
@@ -270,7 +272,7 @@ function Compiler:findLocal(name)
 
   -- check in parameters
   for i = 1, #self.params do
-    if name == self.params[i]  then
+    if name == self.params[i].name  then
       return - ( #self.params - i ) -- because base points to the last param, if exists
     end
   end
@@ -359,12 +361,19 @@ function Compiler:codeCall(ast)
     error("Undefined function '"..ast.fname.."'")
   end
 
-  if #func.params ~= #ast.args then
-    error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.params.." arguments, got "..#ast.args)
+  if #func.requiredParams > #ast.args then
+    error("Wrong number of arguments for '"..ast.fname.."', expected "..#func.requiredParams.." arguments, got "..#ast.args)
   end
 
   for i = 1, #ast.args do
     self:codeExp(ast.args[i])
+  end
+
+  -- add implicit args with default values
+  if #ast.args < #func.params then
+    for i = 1, #func.params - #ast.args do
+      self:codeExp(func.params[i + #func.params - #ast.args].default)
+    end
   end
 
   self:addCode("call")
@@ -535,6 +544,17 @@ function Compiler:codeFunction(ast)
   elseif ast.body then -- if it has a body then define function
     fn.defined = true
     fn.params = ast.params -- to check params number
+
+    -- check for required params
+    local requiredParams = {}
+    for i = 1, #ast.params do
+      if not ast.params[i].default then
+        requiredParams[i] = ast.params[i]
+      end
+    end
+
+    fn.requiredParams = requiredParams
+
     self.code = code
     self.params = ast.params -- to look for a var in params
     self.currentFn = ast
