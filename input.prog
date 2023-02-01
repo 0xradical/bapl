@@ -1,6 +1,6 @@
 function main() {
   var x = 0 + 5;
-  var y = "my string" + " is awesome\n";
+  var y = "my string ${2} = 5" + " is awesome\n";
   var z = strlen("Thiago");
 
   switch 0 {

@@ -42,6 +42,34 @@ local function foldBin(list)
   return tree
 end
 
+local function foldStr(list)
+  local accum = nil
+  local parts = { size = 0 }
+
+  for i = 1, #list do
+    if list[i].tag == "str" then
+      accum = accum or ""
+      accum = accum..list[i].val
+    else -- it's interpolation
+      if accum then
+        parts[parts.size + 1] = { tag = "str-literal", val =  accum }
+        parts.size = parts.size + 1
+        accum = nil
+      end
+
+      parts[parts.size + 1] = list[i]
+      parts.size = parts.size + 1
+    end
+  end
+
+  if accum then
+    parts[parts.size + 1] = { tag = "str-literal", val =  accum }
+    parts.size = parts.size + 1
+  end
+
+  return { tag = "str", parts = parts }
+end
+
 local function foldUnary(list)
   if #list > 1 then
     return { tag = "unop", op = list[1], right = list[2] }
@@ -108,8 +136,8 @@ local decimal = lpeg.R("09")^1 + lpeg.R("19")^1 * lpeg.R("09")^1
 local floating = decimal^0 * "." * decimal^1
 local scientific = floating * lpeg.S("eE") * lpeg.P("-")^-1 * decimal
 local numeral = ( scientific + floating  + hex + decimal ) / tonumber / node("number", "val") * space
-local str = lpeg.P("\"") * ( ( (1 - lpeg.S('"\r\n\f\\')) + lpeg.P('\\') * 1 )^0 / node("str", "val") ) * lpeg.P("\"") * space
 
+local str = lpeg.V"str"
 local ID = lpeg.V"ID"
 local var = ( ID / node("variable", "var") ) * space
 
@@ -146,6 +174,9 @@ local call = lpeg.V"call"
 local params = lpeg.V"params" -- function definition
 local param = lpeg.V"param"
 local args = lpeg.V"args" -- function call
+local interp = lpeg.V"interp"
+local charac = lpeg.V"charac"
+local escape = lpeg.V"escape"
 
 -- used to track max characters matched before
 -- erroring out
@@ -191,6 +222,10 @@ grammar = lpeg.P{
   neg =  lpeg.Ct( opNot * neg  + cmp ) / foldUnary,
   log = lpeg.Ct ( neg * ( opLog * neg )^0 ) / foldBin,
   ID = lpeg.C(underscore^0 * alpha * alphanum^0 - excluded) * space,
+  interp = lpeg.P("${") * log * lpeg.P("}"),
+  escape = lpeg.P('\\') * 1,
+  charac = 1 - lpeg.S('"\r\n\f\\'),
+  str = lpeg.P("\"") *  lpeg.Ct ( ( interp / node("interp", "expr") +  ( charac + escape ) / node("str", "val")  )^1 )^0 / foldStr * lpeg.P("\"") * space,
   space = ( locale.space + comment )^0 * lpeg.P(
     function (_, p)
       maxmatch = math.max(p, maxmatch)
@@ -400,9 +435,20 @@ function Compiler:codeExp(ast)
   if ast.tag == "number" then
     self:addCode("push")
     self:addCode(ast.val)
-  elseif ast.tag == "str" then
+  elseif ast.tag == "str-literal" then
     self:addCode("push")
     self:addCode(ast.val)
+  elseif ast.tag == "interp" then
+    self:codeExp(ast.expr)
+  elseif ast.tag == "str" then
+    for i = 1, ast.parts.size do
+      self:codeExp(ast.parts[i])
+    end
+
+    self:addCode("push")
+    self:addCode(ast.parts.size)
+
+    self:addCode("concat")
   elseif ast.tag == "binop" then
     local op = ops[ast.op]
 
@@ -779,6 +825,16 @@ local function run (code, mem, stack, top)
         error("Cannot call strlen on a "..type(stack[top]))
       end
       stack[top] = #stack[top]
+    elseif code[pc] == "concat" then
+      local size = stack[top]
+      local concat = ""
+
+      for i = size, 1, -1 do
+        concat = concat..stack[top - i]
+      end
+
+      top = top - size
+      stack[top] = concat
     elseif code[pc] == "newarray" then
       local dimensions = stack[top]
       top = top - 1
