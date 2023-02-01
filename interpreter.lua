@@ -256,6 +256,13 @@ local function parse (input)
   return ast
 end
 
+-- builtin functions
+local BuiltinFns = {
+  ["strlen"] = function (str) return #str end,
+  ["strsub"] = function (str, from, to)
+    return string.sub(str,from, to or #str)
+  end
+}
 
 local Compiler = {
   -- code = {},
@@ -404,9 +411,15 @@ function Compiler:codeCall(ast)
 
   if not func then
     -- builtin functions
-    if ast.fname == "strlen" and #ast.args == 1 then
-      self:codeExp(ast.args[1])
-      self:addCode("strlen")
+    if BuiltinFns[ast.fname] then
+      for i = 1, #ast.args do
+        self:codeExp(ast.args[i])
+      end
+      self:addCode("push")
+      self:addCode(#ast.args)
+      self:addCode("push")
+      self:addCode(ast.fname)
+      self:addCode("builtin")
     else
       error("Undefined function '"..ast.fname.."' with "..#ast.args.." parameter"..(#ast.args > 1 and 's' or ''))
     end
@@ -820,11 +833,18 @@ local function run (code, mem, stack, top)
     elseif code[pc] == "print" then
       print(inspect(stack[top]))
       top = top - 1
-    elseif code[pc] == "strlen" then
-      if type(stack[top]) ~= "string" then
-        error("Cannot call strlen on a "..type(stack[top]))
+    elseif code[pc] == "builtin" then
+      local fname = stack[top]
+      top = top - 1
+      local numArgs = stack[top]
+      top = top - 1
+      local args = {}
+      for i = 1, numArgs do
+        args[numArgs - i + 1] = stack[top]
+        top = top - 1
       end
-      stack[top] = #stack[top]
+      top = top + 1
+      stack[top] = BuiltinFns[fname](table.unpack(args))
     elseif code[pc] == "concat" then
       local size = stack[top]
       local concat = ""

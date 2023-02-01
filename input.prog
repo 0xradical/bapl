@@ -1,7 +1,12 @@
 function main() {
   var x = 0 + 5;
-  var y = "my string ${2} = 5" + " is awesome\n";
-  var z = strlen("Thiago");
+  var y = "my string ${x * 4} = 5" + " is awesome\n";
+  var z = strlen("Thiago is my name");
+  var w = strsub("Thiago", 2, 4);
+
+  @ "Substring: ${w}";
+
+  @ z;
 
   switch 0 {
     default:
